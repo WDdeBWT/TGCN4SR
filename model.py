@@ -1,7 +1,7 @@
 import os
 import logging
 import multiprocessing
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 
 import numpy as np
 import torch
@@ -382,7 +382,7 @@ class AttnModel(torch.nn.Module):
 
 
 class TGCN(torch.nn.Module):
-    def __init__(self, ngh_finder, feat_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=16,
+    def __init__(self, ngh_finder, feat_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=None,
                  pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None):
         super(TGCN, self).__init__()
         self.logger = logging.getLogger(__name__)
@@ -392,7 +392,7 @@ class TGCN(torch.nn.Module):
         self.feat_dim = feat_dim # feature_dim
         self.device = device
         self.num_layers = num_layers
-        self.num_workers = num_workers
+        self.num_workers = num_workers if num_workers is not None else cpu_count() // 2
 
         self.node_embed = torch.nn.Embedding(num_embeddings=n_node, embedding_dim=self.feat_dim)
         self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.feat_dim)

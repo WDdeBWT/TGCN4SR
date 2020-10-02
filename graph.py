@@ -7,7 +7,7 @@ class NeighborFinder:
         self.node_to_edge_idxs = []
         self.node_to_edge_timestamps = []
 
-        adj_list_new = [[] for _ in range(n_user + n_item + 1)]
+        adj_list_new = [[] for _ in range(n_user + n_item + 1)] # TODO: Not us +1
         for u in adj_list:
             adj_list_new[u] = [x for x in adj_list[u]]
 
@@ -21,6 +21,12 @@ class NeighborFinder:
                 np.array([x[1] for x in sorted_neighhbors]))
             self.node_to_edge_timestamps.append(
                 np.array([x[2] for x in sorted_neighhbors]))
+        #     print([x[2] for x in sorted_neighhbors])
+        #     if sorted_neighhbors:
+        #         if sorted_neighhbors[0][2] == 0:
+        #             print(sorted_neighhbors)
+        #             exit(0)
+        # exit(0)
 
         self.uniform = uniform
 

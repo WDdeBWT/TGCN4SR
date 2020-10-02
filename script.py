@@ -12,7 +12,7 @@ from metrics import ndcg
 from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 
-EPOCH = 5
+EPOCH = 20
 LR = 0.01
 EDIM = 64
 LAYERS = 2
@@ -99,28 +99,28 @@ def test(model, data_loader, fast_test=False):
                 if tgt in topk_ids:
                     hit += 1
                     # Test
-                    if hit > 100 and hit > total / 2:
-                        print(tgt, topk_ids)
-                        print(hit, total)
+                    # if hit > 100 and hit > total / 2:
+                    #     print(tgt, topk_ids)
+                    #     print(hit, total)
         ndcg_score = float(np.mean(ndcg_score))
         print('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + str(ndcg_score))
         model.del_workers()
 
 
 if __name__ == "__main__":
-    adj_list_train, adj_list_tandv, user_map_test, test_candidate, n_user, n_item = data_partition_amz('newAmazon')
+    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('newAmazon')
 
-    train_dataset = TrainDataset(adj_list_train, n_user, n_item)
+    # train_dataset = TrainDataset(adj_list_train, n_user, n_item)
     tandv_dataset = TrainDataset(adj_list_tandv, n_user, n_item)
-    valid_dataset = ValidDataset(adj_list_tandv, n_user, n_item)
-    test_dataset = TestDataset(user_map_test, test_candidate)
+    valid_dataset = ValidDataset(adj_list_tavat, n_user, n_item)
+    test_dataset = TestDataset(adj_list_tavat, test_candidate, n_user)
 
     train_data_loader = DataLoader(tandv_dataset, batch_size=2048, shuffle=True, num_workers=4)
     valid_data_loader = DataLoader(valid_dataset, batch_size=2048, shuffle=True, num_workers=4)
     test_data_loader = DataLoader(test_dataset, batch_size=2048, shuffle=True, num_workers=4)
 
     train_ngh_finder = NeighborFinder(adj_list_train, n_user, n_item, True) # Initialize training neighbor finder(use train edges)
-    full_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, True) # Initialize test neighbor finder(use train and valid edges)
+    test_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, True) # Initialize test neighbor finder(use train and valid edges)
 
     tgcn_model = TGCN(train_ngh_finder, EDIM, n_user+n_item, 2, device, LAYERS).to(device)
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
@@ -128,8 +128,10 @@ if __name__ == "__main__":
     for epoch_i in range(EPOCH):
         print('Train tgcn - epoch ' + str(epoch_i + 1) + '/' + str(EPOCH))
         train(tgcn_model, train_data_loader, optimizer)
-        test(tgcn_model, test_data_loader, fast_test=True)
-        # evaluate(tgcn_model, valid_data_loader)
+        # tgcn_model.ngh_finder = test_ngh_finder
+        evaluate(tgcn_model, valid_data_loader, test_ngh_finder)
+        test(tgcn_model, test_data_loader, test_ngh_finder, fast_test=True)
+        # tgcn_model.ngh_finder = train_ngh_finder
         # if (epoch_i + 1) % 10 == 0:
         #     test(data_set, model, test_data_loader)
         print('--------------------------------------------------')
