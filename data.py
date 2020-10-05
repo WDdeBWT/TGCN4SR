@@ -18,10 +18,15 @@ class TrainDataset(torch.utils.data.Dataset):
             if u >= n_user:
                 continue
             sorted_tuple = sorted(adj_list[u], key=lambda x: x[2])
-            for x in sorted_tuple[2:]: # TODO: Try not use [2:]
+            # for x in sorted_tuple[2:]: # TODO: Try not use [2:]
+            #     self.instance_user.append(u)
+            #     self.instance_item.append(x[0])
+            #     self.instance_time.append(x[2])
+            for i in range(2, len(sorted_tuple)):
                 self.instance_user.append(u)
-                self.instance_item.append(x[0])
-                self.instance_time.append(x[2])
+                self.instance_item.append(sorted_tuple[i][0])
+                self.instance_time.append(sorted_tuple[i - 1][2] + 1)
+                # self.instance_time.append(sorted_tuple[i][2])
             self.user_map_only_item[u] = [x[0] for x in sorted_tuple]
         assert len(self.instance_user) == len(self.instance_item)
         assert len(self.instance_user) == len(self.instance_time)
@@ -55,10 +60,10 @@ class ValidDataset(torch.utils.data.Dataset):
             if u >= n_user:
                 continue
             sorted_tuple = sorted(adj_list[u], key=lambda x: x[2])
-            x = sorted_tuple[-1]
             self.instance_user.append(u)
-            self.instance_item.append(x[0])
-            self.instance_time.append(x[2])
+            self.instance_item.append(sorted_tuple[-1][0])
+            self.instance_time.append(sorted_tuple[-2][2] + 1)
+            # self.instance_time.append(sorted_tuple[-1][2])
             self.user_map_only_item[u] = [x[0] for x in sorted_tuple]
         assert len(self.instance_user) == len(self.instance_item)
         assert len(self.instance_user) == len(self.instance_time)
@@ -83,11 +88,13 @@ class ValidDataset(torch.utils.data.Dataset):
 
 class TestDataset(torch.utils.data.Dataset):
 
-    def __init__(self, adj_list, test_candidate, n_user):
+    def __init__(self, adj_list, test_candidate, n_user, n_item=None):
+        # TODO: delete n_item
         self.test_instance_user = []
         self.test_instance_target = []
         self.test_instance_candidate = []
         self.test_instance_time = []
+        self.user_map_only_item = defaultdict(list)
         for u in adj_list:
             if u >= n_user:
                 continue
@@ -95,21 +102,41 @@ class TestDataset(torch.utils.data.Dataset):
             assert u in test_candidate
             x = sorted_tuple[-1]
             self.test_instance_user.append(u)
-            self.test_instance_target.append(x[0])
+            self.test_instance_target.append(sorted_tuple[-1][0])
             self.test_instance_candidate.append(test_candidate[u])
-            self.test_instance_time.append(x[1])
+            self.test_instance_time.append(sorted_tuple[-2][2] + 1)
+            # self.test_instance_time.append(sorted_tuple[-1][2])
+            self.user_map_only_item[u] = [x[0] for x in sorted_tuple]
         assert len(self.test_instance_user) == len(self.test_instance_target)
         assert len(self.test_instance_user) == len(self.test_instance_candidate)
         assert len(self.test_instance_user) == len(self.test_instance_time)
+        self.n_user = n_user
+        self.n_item = n_item
 
     def __len__(self):
         return len(self.test_instance_user)
 
+    # def __getitem__(self, index):
+    #     user_id = self.test_instance_user[index]
+    #     target_id = self.test_instance_target[index]
+    #     candidate_ids = torch.Tensor(self.test_instance_candidate[index]).long()
+    #     time_stamp = self.test_instance_time[index]
+    #     return user_id, target_id, candidate_ids, time_stamp
+
     def __getitem__(self, index):
+        # sample version
         user_id = self.test_instance_user[index]
         target_id = self.test_instance_target[index]
-        candidate_ids = torch.Tensor(self.test_instance_candidate[index]).long()
         time_stamp = self.test_instance_time[index]
+        candidate_ids = []
+        while len(candidate_ids) < 100:
+            neg_id = np.random.randint(self.n_user, self.n_user + self.n_item)
+            if neg_id in self.user_map_only_item[user_id]:
+                continue
+            else:
+                candidate_ids.append(int(neg_id))
+        candidate_ids.append(int(target_id))
+        candidate_ids = torch.Tensor(candidate_ids).long()
         return user_id, target_id, candidate_ids, time_stamp
 
 

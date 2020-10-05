@@ -1,4 +1,5 @@
 import time
+import logging
 # import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
@@ -12,8 +13,9 @@ from metrics import ndcg
 from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 
+CODE_VERSION = '1005-2017'
 EPOCH = 20
-LR = 0.01
+LR = 0.002
 EDIM = 64
 LAYERS = 2
 LAM = 1e-4
@@ -22,6 +24,24 @@ TOPK = 5
 
 # GPU / CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# register logging logger
+logger = logging.getLogger()
+logger.setLevel(level=logging.INFO)
+time_line = time.strftime('%Y%m%d_%H:%M', time.localtime(time.time()))
+logfile = time_line + '_tgcn4sr.log'
+print('logfile', logfile)
+formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%d%b %H:%M')
+console_h = logging.StreamHandler()
+console_h.setLevel(logging.INFO)
+console_h.setFormatter(formatter)
+logger.addHandler(console_h)
+if device == torch.cuda.is_available():
+    logfile_h = logging.FileHandler(logfile, mode='w')
+    logfile_h.setLevel(logging.INFO)
+    logfile_h.setFormatter(formatter)
+    logger.addHandler(logfile_h)
+
 
 def train(model, data_loader, optimizer, log_interval=50):
     model.train()
@@ -35,25 +55,25 @@ def train(model, data_loader, optimizer, log_interval=50):
         neg_id = neg_id.numpy()
         time_stamp = time_stamp.numpy()
         loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
-        # print('train loss ' + str(i) + '/' + str(len(data_loader)) + ': ' + str(loss))
+        # logging.info('train loss ' + str(i) + '/' + str(len(data_loader)) + ': ' + str(loss))
         model.zero_grad()
         # time_start = time.time()
         loss.backward()
-        # print('loss.backward time:' + str(time.time() - time_start))
+        # logging.info('loss.backward time:' + str(time.time() - time_start))
         optimizer.step()
         total_loss += loss.cpu().item()
         # t_e = time.time()
-        # print('train one step total time:', t_e - t_s)
+        # logging.info('train one step total time:' + str(t_e - t_s))
         if (i + 1) % log_interval == 0:
-            print('    - Average loss:', total_loss / log_interval)
+            logging.info('Train step: ' + str(i+1) + '/' + str(len(data_loader)) + ' - average loss:' + ' ' + str(total_loss / log_interval))
             total_loss = 0
-    # print('train loss:', total_loss / len(data_loader))
+    # logging.info('train loss:' + ' ' + str(total_loss / len(data_loader)))
     model.del_workers()
 
 
 def evaluate(model, data_loader):
     with torch.no_grad():
-        # print('----- start_evaluate -----')
+        # logging.info('----- start_evaluate -----')
         model.eval()
         model.init_workers()
         total_loss = 0
@@ -66,12 +86,13 @@ def evaluate(model, data_loader):
             loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
             total_loss += loss.cpu().item()
         avg_loss = total_loss / len(data_loader)
-        print('evaluate loss:' + str(avg_loss))
+        logging.info('evaluate loss:' + str(avg_loss))
         model.del_workers()
+
 
 def test(model, data_loader, fast_test=False):
     with torch.no_grad():
-        # print('----- start_test -----')
+        logging.info('----- start_test -----')
         model.eval()
         model.init_workers()
         hit = 0
@@ -90,7 +111,7 @@ def test(model, data_loader, fast_test=False):
             target_id = target_id.numpy()
             candidate_ids = candidate_ids.numpy()
             time_stamp = time_stamp.numpy()
-            # print(candidate_ids.shape) # (2048, 101)
+            # logging.info(candidate_ids.shape) # (2048, 101)
             batch_topk_ids = model.get_top_n(user_id, candidate_ids, time_stamp, num_neighbors=NUM_NEIGHBORS, topk=TOPK).cpu().numpy()
             batch_ndcg = ndcg(batch_topk_ids, target_id)
             ndcg_score.append(batch_ndcg)
@@ -99,21 +120,22 @@ def test(model, data_loader, fast_test=False):
                 if tgt in topk_ids:
                     hit += 1
                     # Test
-                    # if hit > 100 and hit > total / 2:
-                    #     print(tgt, topk_ids)
-                    #     print(hit, total)
+                    if hit > 100 and hit > total / 2:
+                        logging.info(str(tgt) + ' - ' + str(topk_ids))
+                        logging.info(str(hit) + '/' + str(total))
         ndcg_score = float(np.mean(ndcg_score))
-        print('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + str(ndcg_score))
+        logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + str(ndcg_score))
         model.del_workers()
 
 
 if __name__ == "__main__":
+    print('CODE_VERSION: ' + CODE_VERSION)
     adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('newAmazon')
 
     # train_dataset = TrainDataset(adj_list_train, n_user, n_item)
     tandv_dataset = TrainDataset(adj_list_tandv, n_user, n_item)
     valid_dataset = ValidDataset(adj_list_tavat, n_user, n_item)
-    test_dataset = TestDataset(adj_list_tavat, test_candidate, n_user)
+    test_dataset = TestDataset(adj_list_tavat, test_candidate, n_user, n_item)
 
     train_data_loader = DataLoader(tandv_dataset, batch_size=2048, shuffle=True, num_workers=4)
     valid_data_loader = DataLoader(valid_dataset, batch_size=2048, shuffle=True, num_workers=4)
@@ -126,14 +148,14 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
 
     for epoch_i in range(EPOCH):
-        print('Train tgcn - epoch ' + str(epoch_i + 1) + '/' + str(EPOCH))
+        logging.info('Train tgcn - epoch ' + str(epoch_i + 1) + '/' + str(EPOCH))
         train(tgcn_model, train_data_loader, optimizer)
-        # tgcn_model.ngh_finder = test_ngh_finder
-        evaluate(tgcn_model, valid_data_loader, test_ngh_finder)
-        test(tgcn_model, test_data_loader, test_ngh_finder, fast_test=True)
-        # tgcn_model.ngh_finder = train_ngh_finder
+        tgcn_model.ngh_finder = test_ngh_finder
+        evaluate(tgcn_model, valid_data_loader)
+        test(tgcn_model, test_data_loader, fast_test=True)
+        tgcn_model.ngh_finder = train_ngh_finder
         # if (epoch_i + 1) % 10 == 0:
         #     test(data_set, model, test_data_loader)
-        print('--------------------------------------------------')
-    print('==================================================')
+        logging.info('--------------------------------------------------')
+    logging.info('==================================================')
     # test(data_set, model, test_data_loader)

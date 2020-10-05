@@ -325,7 +325,6 @@ class AttnModel(torch.nn.Module):
         #self.act = torch.nn.ReLU()
 
         assert(self.model_dim % n_head == 0)
-        self.logger = logging.getLogger(__name__)
         self.attn_mode = attn_mode
 
         if attn_mode == 'prod':
@@ -334,7 +333,7 @@ class AttnModel(torch.nn.Module):
                                              d_k=self.model_dim // n_head, 
                                              d_v=self.model_dim // n_head, 
                                              dropout=drop_out)
-            self.logger.info('Using scaled prod attention')
+            logging.info('Using scaled prod attention')
 
         elif attn_mode == 'map':
             self.multi_head_target = MapBasedMultiHeadAttention(n_head, 
@@ -342,7 +341,7 @@ class AttnModel(torch.nn.Module):
                                              d_k=self.model_dim // n_head, 
                                              d_v=self.model_dim // n_head, 
                                              dropout=drop_out)
-            self.logger.info('Using map based attention')
+            logging.info('Using map based attention')
         else:
             raise ValueError('attn_mode can only be prod or map')
         
@@ -385,7 +384,6 @@ class TGCN(torch.nn.Module):
     def __init__(self, ngh_finder, feat_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=None,
                  pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None):
         super(TGCN, self).__init__()
-        self.logger = logging.getLogger(__name__)
         self.workers_alive = False
 
         self.ngh_finder = ngh_finder
@@ -399,21 +397,21 @@ class TGCN(torch.nn.Module):
 
         # Choose position encoder
         if pos_encoder == 'time':
-            self.logger.info('Using time encoding')
+            logging.info('Using time encoding')
             self.time_encoder = TimeEncode(expand_dim=self.feat_dim)
         elif pos_encoder == 'pos':
             assert(seq_len is not None)
-            self.logger.info('Using positional encoding')
+            logging.info('Using positional encoding')
             self.time_encoder = PosEncode(expand_dim=self.feat_dim, seq_len=seq_len)
         elif pos_encoder == 'empty':
-            self.logger.info('Using empty encoding')
+            logging.info('Using empty encoding')
             self.time_encoder = EmptyEncode(expand_dim=self.feat_dim)
         else:
             raise ValueError('invalid pos_encoder option!')
 
         # Choose aggregate method
         if agg_method == 'attn':
-            self.logger.info('Aggregation uses attention model')
+            logging.info('Aggregation uses attention model')
             self.attn_model_list = torch.nn.ModuleList([AttnModel(self.feat_dim,
                                                                   self.feat_dim,
                                                                   self.feat_dim,
@@ -421,12 +419,12 @@ class TGCN(torch.nn.Module):
                                                                   n_head=n_head,
                                                                   drop_out=drop_out) for _ in range(num_layers)])
         elif agg_method == 'lstm':
-            self.logger.info('Aggregation uses LSTM model')
+            logging.info('Aggregation uses LSTM model')
             self.attn_model_list = torch.nn.ModuleList([LSTMPool(self.feat_dim,
                                                                  self.feat_dim,
                                                                  self.feat_dim) for _ in range(num_layers)])
         elif agg_method == 'mean':
-            self.logger.info('Aggregation uses constant mean model')
+            logging.info('Aggregation uses constant mean model')
             self.attn_model_list = torch.nn.ModuleList([MeanPool(self.feat_dim,
                                                                  self.feat_dim) for _ in range(num_layers)])
         else:
@@ -502,7 +500,7 @@ class TGCN(torch.nn.Module):
         batch_topk_ids = torch.gather(torch.Tensor(candidate_nodes).long().to(self.device), 1, index_k)
         return batch_topk_ids
 
-    def tem_conv(self, src_nodes, cut_times, curr_layers, num_neighbors=20):
+    def tem_conv(self, src_nodes, cut_times, curr_layers, num_neighbors=20, triple_buffering=False):
         assert(curr_layers >= 0)
         assert src_nodes.ndim == 1
         assert cut_times.ndim == 1
@@ -516,7 +514,7 @@ class TGCN(torch.nn.Module):
         # query node always has the start time -> time span == 0
         src_node_t_embed = self.time_encoder(torch.zeros_like(cut_time_l_th))
         src_node_feat = self.node_embed(src_node_batch_th)
-        
+
         if curr_layers == 0:
             return src_node_feat
         else:
@@ -526,25 +524,18 @@ class TGCN(torch.nn.Module):
                                            num_neighbors=num_neighbors)
             
 
-            # import time
-            # t_s = time.time()
-            # src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.ngh_finder.get_temporal_neighbor( 
-            #                                                         src_nodes, 
-            #                                                         cut_times, 
+            # src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.ngh_finder.get_temporal_neighbor(
+            #                                                         src_nodes,
+            #                                                         cut_times,
             #                                                         n_neighbors=num_neighbors)
             src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.parallel_ngh_find(src_nodes, cut_times, num_neighbors)
-            # print(src_ngh_node_batch.shape)
-            # print(src_ngh_eidx_batch.shape)
-            # print(src_ngh_t_batch.shape)
-            # t_e = time.time()
-            # print('get ngh time:', t_e - t_s)
 
             src_ngh_node_batch_th = torch.from_numpy(src_ngh_node_batch).long().to(self.device)
             src_ngh_eidx_batch = torch.from_numpy(src_ngh_eidx_batch).long().to(self.device)
-            
+
             src_ngh_t_batch_delta = cut_times[:, np.newaxis] - src_ngh_t_batch
             src_ngh_t_batch_th = torch.from_numpy(src_ngh_t_batch_delta).float().to(self.device)
-            
+
             # get previous layer's node features
             src_ngh_node_batch_flat = src_ngh_node_batch.flatten() #reshape(batch_size, -1)
             src_ngh_t_batch_flat = src_ngh_t_batch.flatten() #reshape(batch_size, -1)  
