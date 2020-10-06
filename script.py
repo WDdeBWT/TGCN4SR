@@ -13,9 +13,9 @@ from metrics import ndcg
 from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 
-CODE_VERSION = '1005-2017'
-EPOCH = 20
-LR = 0.002
+CODE_VERSION = '1006-1101'
+EPOCH = 10
+LR = 0.005
 EDIM = 64
 LAYERS = 2
 LAM = 1e-4
@@ -36,7 +36,7 @@ console_h = logging.StreamHandler()
 console_h.setLevel(logging.INFO)
 console_h.setFormatter(formatter)
 logger.addHandler(console_h)
-if device == torch.cuda.is_available():
+if torch.cuda.is_available():
     logfile_h = logging.FileHandler(logfile, mode='w')
     logfile_h.setLevel(logging.INFO)
     logfile_h.setFormatter(formatter)
@@ -45,15 +45,15 @@ if device == torch.cuda.is_available():
 
 def train(model, data_loader, optimizer, log_interval=50):
     model.train()
-    model.init_workers()
+    # model.init_workers()
     total_loss = 0
     for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(tqdm.tqdm(data_loader)):
     # for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(data_loader):
         # t_s = time.time()
-        user_id = user_id.numpy()
-        pos_id = pos_id.numpy()
-        neg_id = neg_id.numpy()
-        time_stamp = time_stamp.numpy()
+        user_id = user_id.to(device)
+        pos_id = pos_id.to(device)
+        neg_id = neg_id.to(device)
+        time_stamp = time_stamp.to(device)
         loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
         # logging.info('train loss ' + str(i) + '/' + str(len(data_loader)) + ': ' + str(loss))
         model.zero_grad()
@@ -68,33 +68,33 @@ def train(model, data_loader, optimizer, log_interval=50):
             logging.info('Train step: ' + str(i+1) + '/' + str(len(data_loader)) + ' - average loss:' + ' ' + str(total_loss / log_interval))
             total_loss = 0
     # logging.info('train loss:' + ' ' + str(total_loss / len(data_loader)))
-    model.del_workers()
+    # model.del_workers()
 
 
 def evaluate(model, data_loader):
     with torch.no_grad():
         # logging.info('----- start_evaluate -----')
         model.eval()
-        model.init_workers()
+        # model.init_workers()
         total_loss = 0
         # for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(tqdm.tqdm(data_loader)):
         for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(data_loader):
-            user_id = user_id.numpy()
-            pos_id = pos_id.numpy()
-            neg_id = neg_id.numpy()
-            time_stamp = time_stamp.numpy()
+            user_id = user_id.to(device)
+            pos_id = pos_id.to(device)
+            neg_id = neg_id.to(device)
+            time_stamp = time_stamp.to(device)
             loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
             total_loss += loss.cpu().item()
         avg_loss = total_loss / len(data_loader)
         logging.info('evaluate loss:' + str(avg_loss))
-        model.del_workers()
+        # model.del_workers()
 
 
 def test(model, data_loader, fast_test=False):
     with torch.no_grad():
         logging.info('----- start_test -----')
         model.eval()
-        model.init_workers()
+        # model.init_workers()
         hit = 0
         total = 0
         ndcg_score = []
@@ -107,10 +107,10 @@ def test(model, data_loader, fast_test=False):
                 candidate_ids = candidate_ids[:cut_len]
                 time_stamp = time_stamp[:cut_len]
 
-            user_id = user_id.numpy()
-            target_id = target_id.numpy()
-            candidate_ids = candidate_ids.numpy()
-            time_stamp = time_stamp.numpy()
+            user_id = user_id.to(device)
+            target_id = target_id.to(device)
+            candidate_ids = candidate_ids.to(device)
+            time_stamp = time_stamp.to(device)
             # logging.info(candidate_ids.shape) # (2048, 101)
             batch_topk_ids = model.get_top_n(user_id, candidate_ids, time_stamp, num_neighbors=NUM_NEIGHBORS, topk=TOPK).cpu().numpy()
             batch_ndcg = ndcg(batch_topk_ids, target_id)
@@ -125,7 +125,7 @@ def test(model, data_loader, fast_test=False):
                         logging.info(str(hit) + '/' + str(total))
         ndcg_score = float(np.mean(ndcg_score))
         logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + str(ndcg_score))
-        model.del_workers()
+        # model.del_workers()
 
 
 if __name__ == "__main__":
@@ -141,10 +141,10 @@ if __name__ == "__main__":
     valid_data_loader = DataLoader(valid_dataset, batch_size=2048, shuffle=True, num_workers=4)
     test_data_loader = DataLoader(test_dataset, batch_size=2048, shuffle=True, num_workers=4)
 
-    train_ngh_finder = NeighborFinder(adj_list_train, n_user, n_item, True) # Initialize training neighbor finder(use train edges)
-    test_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, True) # Initialize test neighbor finder(use train and valid edges)
+    train_ngh_finder = NeighborFinder(adj_list_train, n_user, n_item, True, device=device) # Initialize training neighbor finder(use train edges)
+    test_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, True, device=device) # Initialize test neighbor finder(use train and valid edges)
 
-    tgcn_model = TGCN(train_ngh_finder, EDIM, n_user+n_item, 2, device, LAYERS).to(device)
+    tgcn_model = TGCN(train_ngh_finder, EDIM, n_user+n_item, 2, LAYERS).to(device)
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
 
     for epoch_i in range(EPOCH):

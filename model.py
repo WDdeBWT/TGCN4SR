@@ -381,16 +381,13 @@ class AttnModel(torch.nn.Module):
 
 
 class TGCN(torch.nn.Module):
-    def __init__(self, ngh_finder, feat_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=None,
+    def __init__(self, ngh_finder, feat_dim, n_node, n_edge, num_layers=3,
                  pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None):
         super(TGCN, self).__init__()
-        self.workers_alive = False
 
         self.ngh_finder = ngh_finder
         self.feat_dim = feat_dim # feature_dim
-        self.device = device
         self.num_layers = num_layers
-        self.num_workers = num_workers if num_workers is not None else cpu_count() // 2
 
         self.node_embed = torch.nn.Embedding(num_embeddings=n_node, embedding_dim=self.feat_dim)
         self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.feat_dim)
@@ -432,49 +429,6 @@ class TGCN(torch.nn.Module):
 
         # self.affinity_score = MergeLayer(self.feat_dim, self.feat_dim, self.feat_dim, 1)
 
-    def init_workers(self):
-        assert not self.workers_alive
-        self.index_queues = []
-        self.workers = []
-        self.data_queue = multiprocessing.Queue()
-        for i in range(self.num_workers):
-            index_queue = multiprocessing.Queue()
-            w = multiprocessing.Process(
-                target=_workers,
-                args=(self.ngh_finder, index_queue, self.data_queue))
-            w.daemon = True
-            w.start()
-            self.index_queues.append(index_queue)
-            self.workers.append(w)
-        self.workers_alive = True
-
-    def _organize_received_data(self):
-        assert self.workers_alive
-        result_dict = {}
-        while True:
-            data = self.data_queue.get(timeout=100)
-            result_dict[data[0]] = data[1:]
-            if len(result_dict) == self.num_workers:
-                break
-        return [result_dict[i] for i in range(self.num_workers)]
-
-
-    def del_workers(self):
-        assert self.workers_alive
-        for i in range(self.num_workers):
-            self.index_queues[i].put((i, None))
-        received_data = self._organize_received_data()
-        for i in range(self.num_workers):
-            assert received_data[i][0] is None
-            self.workers[i].join()
-            self.index_queues[i].close()
-        self.data_queue.close()
-
-        self.index_queues = None
-        self.workers = None
-        self.data_queue = None
-        self.workers_alive = False
-
     def bpr_loss(self, src_nodes, tgt_nodes, neg_nodes, cut_times, num_neighbors=20):
         src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, num_neighbors)
         tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, num_neighbors)
@@ -497,7 +451,7 @@ class TGCN(torch.nn.Module):
         if topk <= 0:
             topk = batch_ratings.shape[1]
         rate_k, index_k = torch.topk(batch_ratings, k=topk) # index_k.shape = (batch_size, TOPK), dtype=torch.int
-        batch_topk_ids = torch.gather(torch.Tensor(candidate_nodes).long().to(self.device), 1, index_k)
+        batch_topk_ids = torch.gather(candidate_nodes.long(), 1, index_k)
         return batch_topk_ids
 
     def tem_conv(self, src_nodes, cut_times, curr_layers, num_neighbors=20, triple_buffering=False):
@@ -507,8 +461,8 @@ class TGCN(torch.nn.Module):
 
         batch_size = len(src_nodes)
 
-        src_node_batch_th = torch.from_numpy(src_nodes).long().to(self.device)
-        cut_time_l_th = torch.from_numpy(cut_times).float().to(self.device)
+        src_node_batch_th = src_nodes.long()
+        cut_time_l_th = cut_times.float()
 
         cut_time_l_th = torch.unsqueeze(cut_time_l_th, dim=1)
         # query node always has the start time -> time span == 0
@@ -518,23 +472,22 @@ class TGCN(torch.nn.Module):
         if curr_layers == 0:
             return src_node_feat
         else:
-            src_node_conv_feat = self.tem_conv(src_nodes, 
+            src_node_conv_feat = self.tem_conv(src_nodes,
                                            cut_times,
-                                           curr_layers=curr_layers - 1, 
+                                           curr_layers=curr_layers - 1,
                                            num_neighbors=num_neighbors)
-            
 
-            # src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.ngh_finder.get_temporal_neighbor(
-            #                                                         src_nodes,
-            #                                                         cut_times,
-            #                                                         n_neighbors=num_neighbors)
-            src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.parallel_ngh_find(src_nodes, cut_times, num_neighbors)
 
-            src_ngh_node_batch_th = torch.from_numpy(src_ngh_node_batch).long().to(self.device)
-            src_ngh_eidx_batch = torch.from_numpy(src_ngh_eidx_batch).long().to(self.device)
+            src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.ngh_finder.get_temporal_neighbor(
+                                                                    src_nodes,
+                                                                    cut_times,
+                                                                    n_neighbors=num_neighbors)
+
+            src_ngh_node_batch_th = src_ngh_node_batch.long()
+            src_ngh_eidx_batch = src_ngh_eidx_batch.long()
 
             src_ngh_t_batch_delta = cut_times[:, np.newaxis] - src_ngh_t_batch
-            src_ngh_t_batch_th = torch.from_numpy(src_ngh_t_batch_delta).float().to(self.device)
+            src_ngh_t_batch_th = src_ngh_t_batch_delta.float()
 
             # get previous layer's node features
             src_ngh_node_batch_flat = src_ngh_node_batch.flatten() #reshape(batch_size, -1)
@@ -560,63 +513,3 @@ class TGCN(torch.nn.Module):
                                    src_ngn_edge_feat,
                                    mask)
             return local
-
-    def parallel_ngh_find(self, src_nodes, cut_times, num_neighbors):
-
-        def partition_array(src_nodes, cut_times, n_workers):
-            assert len(src_nodes) == len(cut_times)
-            batch_size = (len(src_nodes) - 1) // n_workers + 1
-            part_list_node = []
-            part_list_time = []
-            count = 0
-            for i in range(n_workers):
-                if i == 0:
-                    part_list_node.append(src_nodes[: batch_size])
-                    part_list_time.append(cut_times[: batch_size])
-                elif i == n_workers-1:
-                    part_list_node.append(src_nodes[i * batch_size:])
-                    part_list_time.append(cut_times[i * batch_size:])
-                else:
-                    part_list_node.append(src_nodes[i * batch_size: (i+1) * batch_size])
-                    part_list_time.append(cut_times[i * batch_size: (i+1) * batch_size])
-            return part_list_node, part_list_time
-
-        assert self.workers_alive
-        part_list_node, part_list_time = partition_array(src_nodes, cut_times, self.num_workers)
-        for i in range(self.num_workers):
-            self.index_queues[i].put((i, part_list_node[i], part_list_time[i], num_neighbors))
-        received_data = self._organize_received_data()
-
-        out_neighbors = np.concatenate([x[0] for x in received_data])
-        baout_edges = np.concatenate([x[1] for x in received_data])
-        out_timestamps = np.concatenate([x[2] for x in received_data])
-        return out_neighbors, baout_edges, out_timestamps
-
-
-class ManagerWatchdog(object):
-        def __init__(self):
-            self.manager_pid = os.getppid()
-            self.manager_dead = False
-
-        def is_alive(self):
-            if not self.manager_dead:
-                self.manager_dead = os.getppid() != self.manager_pid
-            return not self.manager_dead
-
-
-def _workers(finder, index_queue, data_queue):
-    watchdog = ManagerWatchdog()
-    while watchdog.is_alive():
-        # try:
-        #     index_in = index_queue.get(timeout=MP_STATUS_CHECK_INTERVAL)
-        # except:
-        #     assert False # continue
-        index_in = index_queue.get(timeout=100)
-
-        if index_in[1] is None:
-            job_id = index_in[0]
-            break
-        job_id, part_list_node, part_list_time, num_neighbors = index_in
-        n, e, t = finder.get_temporal_neighbor(part_list_node, part_list_time, num_neighbors)
-        data_queue.put((job_id, n, e, t))
-    data_queue.put((job_id, None))

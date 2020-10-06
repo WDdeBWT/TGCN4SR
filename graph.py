@@ -1,11 +1,13 @@
-import numpy as np
 import torch
+from torch.nn.utils.rnn import pad_sequence
+import numpy as np
 
 class NeighborFinder:
-    def __init__(self, adj_list, n_user, n_item, uniform=False, seed=None):
+    def __init__(self, adj_list, n_user, n_item, uniform=False, seed=None, device='cpu'):
         self.node_to_neighbors = []
         self.node_to_edge_idxs = []
         self.node_to_edge_timestamps = []
+        self.device = device
 
         adj_list_new = [[] for _ in range(n_user + n_item + 1)] # TODO: Not us +1
         for u in adj_list:
@@ -16,17 +18,11 @@ class NeighborFinder:
             # We sort the list based on timestamp
             sorted_neighhbors = sorted(neighbors, key=lambda x: x[2])
             self.node_to_neighbors.append(
-                np.array([x[0] for x in sorted_neighhbors]))
+                torch.tensor([x[0] for x in sorted_neighhbors]).to(self.device))
             self.node_to_edge_idxs.append(
-                np.array([x[1] for x in sorted_neighhbors]))
+                torch.tensor([x[1] for x in sorted_neighhbors]).to(self.device))
             self.node_to_edge_timestamps.append(
-                np.array([x[2] for x in sorted_neighhbors]))
-        #     print([x[2] for x in sorted_neighhbors])
-        #     if sorted_neighhbors:
-        #         if sorted_neighhbors[0][2] == 0:
-        #             print(sorted_neighhbors)
-        #             exit(0)
-        # exit(0)
+                torch.tensor([x[2] for x in sorted_neighhbors]).to(self.device))
 
         self.uniform = uniform
 
@@ -45,6 +41,19 @@ class NeighborFinder:
 
         return self.node_to_neighbors[src_idx][:i], self.node_to_edge_idxs[src_idx][:i], self.node_to_edge_timestamps[src_idx][:i]
 
+    def find_before_batch(self, batch_src_idx, batch_cut_time):
+        """
+        Extracts all the interactions happening before cut_time for user src_idx in the overall interaction graph. The returned interactions are sorted by time.
+
+        Returns 3 lists: neighbors, edge_idxs, timestamps
+
+        """
+        batch_time_stamps = pad_sequence([self.node_to_edge_timestamps[src_idx] for src_idx in batch_src_idx], batch_first=True, padding_value=9999999999)
+        batch_cut_time = batch_cut_time.reshape(-1, 1)
+        batch_cut_idx = torch.searchsorted(batch_time_stamps, batch_cut_time)
+
+        return batch_cut_idx
+
     def get_temporal_neighbor(self, batch_source_node, batch_timestamp, n_neighbors=20):
         """
         Given a list of users ids and relative cut times, extracts a sampled temporal neighborhood of each user in the list.
@@ -59,18 +68,20 @@ class NeighborFinder:
 
         tmp_n_neighbors = n_neighbors if n_neighbors > 0 else 1
         # NB! All interactions described in these matrices are sorted in each row by time
-        out_neighbors = np.zeros((len(batch_source_node), tmp_n_neighbors)).astype(np.int32) # each entry in position (i,j) represent the id of the item targeted by user src_idx_l[i] with an interaction happening before cut_time_l[i]
-        out_timestamps = np.zeros((len(batch_source_node), tmp_n_neighbors)).astype(np.float32) # each entry in position (i,j) represent the timestamp of an interaction between user src_idx_l[i] and item neighbors[i,j] happening before cut_time_l[i]
-        baout_edges = np.zeros((len(batch_source_node), tmp_n_neighbors)).astype(np.int32) # each entry in position (i,j) represent the interaction index of an interaction between user src_idx_l[i] and item neighbors[i,j] happening before cut_time_l[i]
+        out_neighbors = torch.zeros((len(batch_source_node), tmp_n_neighbors)).to(torch.int32).to(self.device) # each entry in position (i,j) represent the id of the item targeted by user src_idx_l[i] with an interaction happening before cut_time_l[i]
+        out_timestamps = torch.zeros((len(batch_source_node), tmp_n_neighbors)).to(torch.float32).to(self.device) # each entry in position (i,j) represent the timestamp of an interaction between user src_idx_l[i] and item neighbors[i,j] happening before cut_time_l[i]
+        baout_edges = torch.zeros((len(batch_source_node), tmp_n_neighbors)).to(torch.int32).to(self.device) # each entry in position (i,j) represent the interaction index of an interaction between user src_idx_l[i] and item neighbors[i,j] happening before cut_time_l[i]
 
-        for i, (source_node, timestamp) in enumerate(zip(batch_source_node, batch_timestamp)):
-            # extracts all neighbors, interactions indexes and timestamps of all interactions of user source_node happening before cut_time
-            source_neighbors, source_edge_idxs, source_edge_times = self.find_before(source_node, timestamp)
+        batch_cut_idx = self.find_before_batch(batch_source_node, batch_timestamp)
+        for i, (source_node, cut_idx) in enumerate(zip(batch_source_node, batch_cut_idx)):
+            cut_idx = int(cut_idx.item())
+            source_neighbors = self.node_to_neighbors[source_node][:cut_idx]
+            source_edge_idxs = self.node_to_edge_idxs[source_node][:cut_idx]
+            source_edge_times = self.node_to_edge_timestamps[source_node][:cut_idx]
 
             if len(source_neighbors) > 0 and n_neighbors > 0:
                 if self.uniform: # if we are applying uniform sampling, shuffles the data above before sampling
-                    sampled_idx = np.random.randint(
-                        0, len(source_neighbors), n_neighbors)
+                    sampled_idx = torch.randint(0, len(source_neighbors), (n_neighbors,))
 
                     out_neighbors[i, :] = source_neighbors[sampled_idx]
                     out_timestamps[i, :] = source_edge_times[sampled_idx]
