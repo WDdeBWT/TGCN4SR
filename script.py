@@ -1,5 +1,6 @@
 import time
 import logging
+from multiprocessing import cpu_count
 # import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
@@ -13,14 +14,28 @@ from metrics import ndcg
 from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 
-CODE_VERSION = '1005-2017'
-EPOCH = 20
+CODE_VERSION = '1007-1140'
+
+TOPK = 5
+EPOCH = 30
 LR = 0.002
+BATCH_SIZE = 2048
+NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
+NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
+if cpu_count() <= 2:
+    # Colab mode
+    NUM_WORKERS_DL = 0
+    NUM_WORKERS_SN = 2
+
+LAM = 1e-4
 EDIM = 64
 LAYERS = 2
-LAM = 1e-4
 NUM_NEIGHBORS = 20
-TOPK = 5
+POS_ENCODER = 'pos' # time, pos, empty
+AGG_METHOD = 'attn' # attn, lstm, mean
+ATTN_MODE = 'prod' # prod, map
+N_HEAD = 4
+DROP_OUT = 0.1
 
 # GPU / CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,7 +51,7 @@ console_h = logging.StreamHandler()
 console_h.setLevel(logging.INFO)
 console_h.setFormatter(formatter)
 logger.addHandler(console_h)
-if device == torch.cuda.is_available():
+if torch.cuda.is_available():
     logfile_h = logging.FileHandler(logfile, mode='w')
     logfile_h.setLevel(logging.INFO)
     logfile_h.setFormatter(formatter)
@@ -137,14 +152,24 @@ if __name__ == "__main__":
     valid_dataset = ValidDataset(adj_list_tavat, n_user, n_item)
     test_dataset = TestDataset(adj_list_tavat, test_candidate, n_user, n_item)
 
-    train_data_loader = DataLoader(tandv_dataset, batch_size=2048, shuffle=True, num_workers=4)
-    valid_data_loader = DataLoader(valid_dataset, batch_size=2048, shuffle=True, num_workers=4)
-    test_data_loader = DataLoader(test_dataset, batch_size=2048, shuffle=True, num_workers=4)
+    train_data_loader = DataLoader(tandv_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS_DL)
+    valid_data_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS_DL)
+    test_data_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS_DL)
 
     train_ngh_finder = NeighborFinder(adj_list_train, n_user, n_item, True) # Initialize training neighbor finder(use train edges)
     test_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, True) # Initialize test neighbor finder(use train and valid edges)
 
-    tgcn_model = TGCN(train_ngh_finder, EDIM, n_user+n_item, 2, device, LAYERS).to(device)
+    if POS_ENCODER == 'pos':
+        seq_len = 0
+        for u in adj_list_tavat:
+            if len(adj_list_tavat[u]) > seq_len:
+                seq_len = len(adj_list_tavat[u])
+    else:
+        seq_len = None
+
+    tgcn_model = TGCN(train_ngh_finder, EDIM, n_user+n_item, 2, device, LAYERS, NUM_WORKERS_SN,
+                      pos_encoder=POS_ENCODER, agg_method=AGG_METHOD, attn_mode=ATTN_MODE,
+                      n_head=N_HEAD, drop_out=DROP_OUT, seq_len=seq_len).to(device)
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
 
     for epoch_i in range(EPOCH):
@@ -154,8 +179,6 @@ if __name__ == "__main__":
         evaluate(tgcn_model, valid_data_loader)
         test(tgcn_model, test_data_loader, fast_test=True)
         tgcn_model.ngh_finder = train_ngh_finder
-        # if (epoch_i + 1) % 10 == 0:
-        #     test(data_set, model, test_data_loader)
         logging.info('--------------------------------------------------')
     logging.info('==================================================')
     # test(data_set, model, test_data_loader)

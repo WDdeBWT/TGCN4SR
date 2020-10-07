@@ -123,16 +123,16 @@ class MapBasedMultiHeadAttention(nn.Module):
         self.wq_node_transform = nn.Linear(d_model, n_head * d_k, bias=False)
         self.wk_node_transform = nn.Linear(d_model, n_head * d_k, bias=False)
         self.wv_node_transform = nn.Linear(d_model, n_head * d_k, bias=False)
-        
+
         self.layer_norm = nn.LayerNorm(d_model)
 
         self.fc = nn.Linear(n_head * d_v, d_model)
-        
+
         self.act = nn.LeakyReLU(negative_slope=0.2)
         self.weight_map = nn.Linear(2 * d_k, 1, bias=False)
-        
+
         nn.init.xavier_normal_(self.fc.weight)
-        
+
         self.dropout = torch.nn.Dropout(dropout)
         self.softmax = torch.nn.Softmax(dim=2)
 
@@ -381,7 +381,7 @@ class AttnModel(torch.nn.Module):
 
 
 class TGCN(torch.nn.Module):
-    def __init__(self, ngh_finder, feat_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=None,
+    def __init__(self, ngh_finder, feat_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=0,
                  pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None):
         super(TGCN, self).__init__()
         self.workers_alive = False
@@ -390,7 +390,11 @@ class TGCN(torch.nn.Module):
         self.feat_dim = feat_dim # feature_dim
         self.device = device
         self.num_layers = num_layers
-        self.num_workers = num_workers if num_workers is not None else cpu_count() // 2
+
+        if num_workers is None:
+            self.num_workers = None
+        else:
+            self.num_workers = num_workers if num_workers != 0 else cpu_count() // 2
 
         self.node_embed = torch.nn.Embedding(num_embeddings=n_node, embedding_dim=self.feat_dim)
         self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.feat_dim)
@@ -433,20 +437,21 @@ class TGCN(torch.nn.Module):
         # self.affinity_score = MergeLayer(self.feat_dim, self.feat_dim, self.feat_dim, 1)
 
     def init_workers(self):
-        assert not self.workers_alive
-        self.index_queues = []
-        self.workers = []
-        self.data_queue = multiprocessing.Queue()
-        for i in range(self.num_workers):
-            index_queue = multiprocessing.Queue()
-            w = multiprocessing.Process(
-                target=_workers,
-                args=(self.ngh_finder, index_queue, self.data_queue))
-            w.daemon = True
-            w.start()
-            self.index_queues.append(index_queue)
-            self.workers.append(w)
-        self.workers_alive = True
+        if self.num_workers is not None:
+            assert not self.workers_alive
+            self.index_queues = []
+            self.workers = []
+            self.data_queue = multiprocessing.Queue()
+            for i in range(self.num_workers):
+                index_queue = multiprocessing.Queue()
+                w = multiprocessing.Process(
+                    target=_workers,
+                    args=(self.ngh_finder, index_queue, self.data_queue))
+                w.daemon = True
+                w.start()
+                self.index_queues.append(index_queue)
+                self.workers.append(w)
+            self.workers_alive = True
 
     def _organize_received_data(self):
         assert self.workers_alive
@@ -460,20 +465,21 @@ class TGCN(torch.nn.Module):
 
 
     def del_workers(self):
-        assert self.workers_alive
-        for i in range(self.num_workers):
-            self.index_queues[i].put((i, None))
-        received_data = self._organize_received_data()
-        for i in range(self.num_workers):
-            assert received_data[i][0] is None
-            self.workers[i].join()
-            self.index_queues[i].close()
-        self.data_queue.close()
+        if self.num_workers is not None:
+            assert self.workers_alive
+            for i in range(self.num_workers):
+                self.index_queues[i].put((i, None))
+            received_data = self._organize_received_data()
+            for i in range(self.num_workers):
+                assert received_data[i][0] is None
+                self.workers[i].join()
+                self.index_queues[i].close()
+            self.data_queue.close()
 
-        self.index_queues = None
-        self.workers = None
-        self.data_queue = None
-        self.workers_alive = False
+            self.index_queues = None
+            self.workers = None
+            self.data_queue = None
+            self.workers_alive = False
 
     def bpr_loss(self, src_nodes, tgt_nodes, neg_nodes, cut_times, num_neighbors=20):
         src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, num_neighbors)
@@ -524,11 +530,12 @@ class TGCN(torch.nn.Module):
                                            num_neighbors=num_neighbors)
             
 
-            # src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.ngh_finder.get_temporal_neighbor(
-            #                                                         src_nodes,
-            #                                                         cut_times,
-            #                                                         n_neighbors=num_neighbors)
-            src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.parallel_ngh_find(src_nodes, cut_times, num_neighbors)
+            if self.num_workers is None:
+                src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.ngh_finder.get_temporal_neighbor(src_nodes,
+                                                                                                                cut_times,
+                                                                                                                num_neighbors)
+            else:
+                src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.parallel_ngh_find(src_nodes, cut_times, num_neighbors)
 
             src_ngh_node_batch_th = torch.from_numpy(src_ngh_node_batch).long().to(self.device)
             src_ngh_eidx_batch = torch.from_numpy(src_ngh_eidx_batch).long().to(self.device)
