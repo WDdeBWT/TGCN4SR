@@ -14,8 +14,9 @@ from metrics import ndcg
 from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 
-CODE_VERSION = '1007-1140'
+CODE_VERSION = '1010-1544'
 
+DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
 EPOCH = 30
 LR = 0.002
@@ -28,7 +29,8 @@ if cpu_count() <= 2:
     NUM_WORKERS_SN = 2
 
 LAM = 1e-4
-EDIM = 64
+FEATURE_DIM = 64
+EDGE_DIM = 8
 LAYERS = 2
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty
@@ -134,10 +136,10 @@ def test(model, data_loader, fast_test=False):
                 total += 1
                 if tgt in topk_ids:
                     hit += 1
-                    # Test
-                    if hit > 100 and hit > total / 2:
-                        logging.info(str(tgt) + ' - ' + str(topk_ids))
-                        logging.info(str(hit) + '/' + str(total))
+                    # # Test
+                    # if hit > 100 and hit > total / 2:
+                    #     print(str(tgt) + ' - ' + str(topk_ids))
+                    #     print(str(hit) + '/' + str(total))
         ndcg_score = float(np.mean(ndcg_score))
         logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + str(ndcg_score))
         model.del_workers()
@@ -145,7 +147,7 @@ def test(model, data_loader, fast_test=False):
 
 if __name__ == "__main__":
     print('CODE_VERSION: ' + CODE_VERSION)
-    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('newAmazon')
+    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz(DATASET)
 
     # train_dataset = TrainDataset(adj_list_train, n_user, n_item)
     tandv_dataset = TrainDataset(adj_list_tandv, n_user, n_item)
@@ -167,7 +169,7 @@ if __name__ == "__main__":
     else:
         seq_len = None
 
-    tgcn_model = TGCN(train_ngh_finder, EDIM, n_user+n_item, 2, device, LAYERS, NUM_WORKERS_SN,
+    tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, EDGE_DIM, n_user+n_item, 2, device, LAYERS, NUM_WORKERS_SN,
                       pos_encoder=POS_ENCODER, agg_method=AGG_METHOD, attn_mode=ATTN_MODE,
                       n_head=N_HEAD, drop_out=DROP_OUT, seq_len=seq_len).to(device)
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)

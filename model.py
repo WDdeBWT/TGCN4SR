@@ -314,6 +314,7 @@ class AttnModel(torch.nn.Module):
         super(AttnModel, self).__init__()
 
         self.feat_dim = feat_dim
+        self.edge_dim = edge_dim
         self.time_dim = time_dim
 
         self.edge_in_dim = (feat_dim + edge_dim + time_dim)
@@ -364,10 +365,11 @@ class AttnModel(torch.nn.Module):
         """
 
         src_ext = torch.unsqueeze(src, dim=1) # src [B, 1, D]
-        src_e_ph = torch.zeros_like(src_ext)
+        # src_e_ph = torch.zeros_like(src_ext)
+        src_e_ph = torch.zeros(src_ext.shape[0], src_ext.shape[1], self.edge_dim).to(src_ext)
         q = torch.cat([src_ext, src_e_ph, src_t], dim=2) # [B, 1, D + De + Dt] -> [B, 1, D]
         k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, 1, D + De + Dt] -> [B, 1, D]
-        
+
         mask = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
         mask = mask.permute([0, 2, 1]) #mask [B, 1, N]
 
@@ -381,13 +383,14 @@ class AttnModel(torch.nn.Module):
 
 
 class TGCN(torch.nn.Module):
-    def __init__(self, ngh_finder, feat_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=0,
+    def __init__(self, ngh_finder, feat_dim, edge_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=0,
                  pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None):
         super(TGCN, self).__init__()
         self.workers_alive = False
 
         self.ngh_finder = ngh_finder
         self.feat_dim = feat_dim # feature_dim
+        self.edge_dim = edge_dim # edge_dim
         self.device = device
         self.num_layers = num_layers
 
@@ -397,7 +400,8 @@ class TGCN(torch.nn.Module):
             self.num_workers = num_workers if num_workers != 0 else cpu_count() // 2
 
         self.node_embed = torch.nn.Embedding(num_embeddings=n_node, embedding_dim=self.feat_dim)
-        self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.feat_dim)
+        # self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.feat_dim)
+        self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.edge_dim)
 
         # Choose position encoder
         if pos_encoder == 'time':
@@ -417,7 +421,7 @@ class TGCN(torch.nn.Module):
         if agg_method == 'attn':
             logging.info('Aggregation uses attention model')
             self.attn_model_list = torch.nn.ModuleList([AttnModel(self.feat_dim,
-                                                                  self.feat_dim,
+                                                                  self.edge_dim,
                                                                   self.feat_dim,
                                                                   attn_mode=attn_mode,
                                                                   n_head=n_head,
@@ -488,7 +492,7 @@ class TGCN(torch.nn.Module):
         pos_scores = torch.sum(src_embed * tgt_embed, dim=1)
         neg_scores = torch.sum(src_embed * neg_embed, dim=1)
         loss = torch.mean(nn.functional.softplus(neg_scores - pos_scores))
-        # reg_loss = (1/2) * reg_loss / float(len(users)) # TODO: add this
+        # reg_loss = (1/2) * reg_loss / float(len(users))
         return loss
 
     def get_top_n(self, src_nodes, candidate_nodes, cut_times, num_neighbors=20, topk=20):
