@@ -1,8 +1,8 @@
 import time
 import logging
 from multiprocessing import cpu_count
-# import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import tqdm
 import numpy as np
@@ -14,7 +14,7 @@ from metrics import ndcg
 from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 
-CODE_VERSION = '1010-1544'
+CODE_VERSION = '1012-1151'
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5

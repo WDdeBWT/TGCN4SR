@@ -228,11 +228,15 @@ class TimeEncode(torch.nn.Module):
 class PosEncode(torch.nn.Module):
     def __init__(self, expand_dim, seq_len):
         super().__init__()
-        self.pos_embeddings = nn.Embedding(num_embeddings=seq_len, embedding_dim=expand_dim)
+        self.pos_embeddings = nn.Embedding(num_embeddings=seq_len + 1, embedding_dim=expand_dim) # +1 for ts = 0
+        self.seq_len = seq_len
 
     def forward(self, ts):
         # ts: [N, L]
-        order = ts.argsort()
+        if torch.sum(torch.zeros_like(ts) == ts) == ts.numel():
+            order = ts.long() + self.seq_len # TODO: try to not + self.seq_len
+        else:
+            order = ts.argsort()
         ts_emb = self.pos_embeddings(order)
         return ts_emb
 
@@ -329,18 +333,18 @@ class AttnModel(torch.nn.Module):
         self.attn_mode = attn_mode
 
         if attn_mode == 'prod':
-            self.multi_head_target = MultiHeadAttention(n_head, 
-                                             d_model=self.model_dim, 
-                                             d_k=self.model_dim // n_head, 
-                                             d_v=self.model_dim // n_head, 
+            self.multi_head_target = MultiHeadAttention(n_head,
+                                             d_model=self.model_dim,
+                                             d_k=self.model_dim // n_head,
+                                             d_v=self.model_dim // n_head,
                                              dropout=drop_out)
             logging.info('Using scaled prod attention')
 
         elif attn_mode == 'map':
-            self.multi_head_target = MapBasedMultiHeadAttention(n_head, 
-                                             d_model=self.model_dim, 
-                                             d_k=self.model_dim // n_head, 
-                                             d_v=self.model_dim // n_head, 
+            self.multi_head_target = MapBasedMultiHeadAttention(n_head,
+                                             d_model=self.model_dim,
+                                             d_k=self.model_dim // n_head,
+                                             d_v=self.model_dim // n_head,
                                              dropout=drop_out)
             logging.info('Using map based attention')
         else:
