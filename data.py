@@ -218,6 +218,13 @@ def data_partition_amz(dataset_name='newAmazon'):
 
 if __name__ == "__main__":
     adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz()
+    import matplotlib.pyplot as plt
+    degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])
+    plt.hist(x = degree_list, range=(0, 199), bins=100, color='steelblue', edgecolor='black')
+    # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
+    # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
+    plt.show()
+    exit(0)
 
     total = 0
     hit = 0
