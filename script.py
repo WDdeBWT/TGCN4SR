@@ -14,13 +14,13 @@ from metrics import ndcg
 from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 
-CODE_VERSION = '1012-1151'
+CODE_VERSION = '1013-1319'
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
 EPOCH = 30
 LR = 0.002
-BATCH_SIZE = 2048
+BATCH_SIZE = 1800
 NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 if cpu_count() <= 2:
@@ -31,10 +31,11 @@ if cpu_count() <= 2:
 LAM = 1e-4
 FEATURE_DIM = 64
 EDGE_DIM = 8
+TIME_DIM = 32
 LAYERS = 2
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty
-AGG_METHOD = 'attn' # attn, lstm, mean
+AGG_METHOD = 'mix' # attn, lstm, mean, mix
 ATTN_MODE = 'prod' # prod, map
 N_HEAD = 4
 DROP_OUT = 0.1
@@ -169,7 +170,7 @@ if __name__ == "__main__":
     else:
         seq_len = None
 
-    tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, EDGE_DIM, n_user+n_item, 2, device, LAYERS, NUM_WORKERS_SN,
+    tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, EDGE_DIM, TIME_DIM, n_user+n_item, 2, device, LAYERS, NUM_WORKERS_SN,
                       pos_encoder=POS_ENCODER, agg_method=AGG_METHOD, attn_mode=ATTN_MODE,
                       n_head=N_HEAD, drop_out=DROP_OUT, seq_len=seq_len).to(device)
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)

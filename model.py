@@ -234,7 +234,7 @@ class PosEncode(torch.nn.Module):
     def forward(self, ts):
         # ts: [N, L]
         if torch.sum(torch.zeros_like(ts) == ts) == ts.numel():
-            order = ts.long() + self.seq_len # TODO: try to not + self.seq_len
+            order = ts.long() + self.seq_len
         else:
             order = ts.argsort()
         ts_emb = self.pos_embeddings(order)
@@ -260,7 +260,8 @@ class LSTMPool(torch.nn.Module):
         self.time_dim = time_dim
         self.edge_dim = edge_dim
 
-        self.att_dim = feat_dim + edge_dim + time_dim
+        # self.att_dim = feat_dim + edge_dim + time_dim
+        self.att_dim = feat_dim + edge_dim
 
         self.act = torch.nn.ReLU()
 
@@ -273,7 +274,8 @@ class LSTMPool(torch.nn.Module):
     def forward(self, src, src_t, seq, seq_t, seq_e, mask):
         # seq [B, N, D]
         # mask [B, N]
-        seq_x = torch.cat([seq, seq_e, seq_t], dim=2)
+        # seq_x = torch.cat([seq, seq_e, seq_t], dim=2)
+        seq_x = torch.cat([seq, seq_e], dim=2)
 
         _, (hn, _) = self.lstm(seq_x)
 
@@ -386,8 +388,25 @@ class AttnModel(torch.nn.Module):
         return output, attn
 
 
+class MixModel(torch.nn.Module):
+    """Attention based temporal layers
+    """
+    def __init__(self, feat_dim, edge_dim, time_dim, 
+                 attn_mode='prod', n_head=2, drop_out=0.1):
+        super(MixModel, self).__init__()
+        self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, attn_mode, n_head, drop_out)
+        self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim)
+
+    def forward(self, src, src_t, seq, seq_t, seq_e, mask):
+        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, mask)
+        lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, mask)
+
+        output = (attn_result + lstm_result) / 2
+        return output, None
+
+
 class TGCN(torch.nn.Module):
-    def __init__(self, ngh_finder, feat_dim, edge_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=0,
+    def __init__(self, ngh_finder, feat_dim, edge_dim, time_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=0,
                  pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None):
         super(TGCN, self).__init__()
         self.workers_alive = False
@@ -395,6 +414,7 @@ class TGCN(torch.nn.Module):
         self.ngh_finder = ngh_finder
         self.feat_dim = feat_dim # feature_dim
         self.edge_dim = edge_dim # edge_dim
+        self.time_dim = time_dim # time_dim
         self.device = device
         self.num_layers = num_layers
 
@@ -410,14 +430,14 @@ class TGCN(torch.nn.Module):
         # Choose position encoder
         if pos_encoder == 'time':
             logging.info('Using time encoding')
-            self.time_encoder = TimeEncode(expand_dim=self.feat_dim)
+            self.time_encoder = TimeEncode(expand_dim=self.time_dim)
         elif pos_encoder == 'pos':
             assert(seq_len is not None)
             logging.info('Using positional encoding')
-            self.time_encoder = PosEncode(expand_dim=self.feat_dim, seq_len=seq_len)
+            self.time_encoder = PosEncode(expand_dim=self.time_dim, seq_len=seq_len)
         elif pos_encoder == 'empty':
             logging.info('Using empty encoding')
-            self.time_encoder = EmptyEncode(expand_dim=self.feat_dim)
+            self.time_encoder = EmptyEncode(expand_dim=self.time_dim)
         else:
             raise ValueError('invalid pos_encoder option!')
 
@@ -426,19 +446,27 @@ class TGCN(torch.nn.Module):
             logging.info('Aggregation uses attention model')
             self.attn_model_list = torch.nn.ModuleList([AttnModel(self.feat_dim,
                                                                   self.edge_dim,
-                                                                  self.feat_dim,
+                                                                  self.time_dim,
                                                                   attn_mode=attn_mode,
                                                                   n_head=n_head,
                                                                   drop_out=drop_out) for _ in range(num_layers)])
         elif agg_method == 'lstm':
             logging.info('Aggregation uses LSTM model')
             self.attn_model_list = torch.nn.ModuleList([LSTMPool(self.feat_dim,
-                                                                 self.feat_dim,
-                                                                 self.feat_dim) for _ in range(num_layers)])
+                                                                 self.edge_dim,
+                                                                 self.time_dim) for _ in range(num_layers)])
         elif agg_method == 'mean':
             logging.info('Aggregation uses constant mean model')
             self.attn_model_list = torch.nn.ModuleList([MeanPool(self.feat_dim,
-                                                                 self.feat_dim) for _ in range(num_layers)])
+                                                                 self.edge_dim) for _ in range(num_layers)])
+        elif agg_method == 'mix':
+            logging.info('Aggregation uses attention model')
+            self.attn_model_list = torch.nn.ModuleList([MixModel(self.feat_dim,
+                                                                  self.edge_dim,
+                                                                  self.time_dim,
+                                                                  attn_mode=attn_mode,
+                                                                  n_head=n_head,
+                                                                  drop_out=drop_out) for _ in range(num_layers)])
         else:
             raise ValueError('invalid agg_method value, use attn or lstm')
 
