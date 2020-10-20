@@ -52,8 +52,6 @@ class ScaledDotProductAttention(torch.nn.Module):
         time_diff = time_diff + nn.functional.softplus(self.time_plus_weight) * torch.max(time_diff) # Try time diff
         time_diff_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try time diff
 
-        attn = attn + self.time_mul_weight * time_diff_weight # Try time diff
-
         # tdw_li = time_diff_weight.reshape(-1).tolist()
         # import matplotlib.pyplot as plt
         # # plt.hist(x = tdw_li, range=(0.99, 1.01), bins=100, color='steelblue', edgecolor='black')
@@ -63,10 +61,13 @@ class ScaledDotProductAttention(torch.nn.Module):
 
         # exit(0)
 
-        if mask is not None:
+        if torch.sum(mask) != 0:
             attn = attn.masked_fill(mask, -1e10)
+            time_diff_weight = time_diff_weight.masked_fill(mask, -1e10) # Try time diff
 
         attn = self.softmax(attn) # [n * b, l_q, l_k]
+        time_diff_weight = self.softmax(time_diff_weight) # Try time diff
+        attn = (attn + self.time_mul_weight * time_diff_weight) / (1 + self.time_mul_weight) # Try time diff
         attn = self.dropout(attn) # [n * b, l_v, d]
 
         output = torch.bmm(attn, v)
@@ -167,53 +168,53 @@ class MapBasedMultiHeadAttention(nn.Module):
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
 
         sz_b, len_q, _ = q.size()
-        
+    
         sz_b, len_k, _ = k.size()
         sz_b, len_v, _ = v.size()
 
         residual = q
 
         q = self.wq_node_transform(q).view(sz_b, len_q, n_head, d_k)
-        
+
         k = self.wk_node_transform(k).view(sz_b, len_k, n_head, d_k)
-        
+
         v = self.wv_node_transform(v).view(sz_b, len_v, n_head, d_v)
 
         q = q.permute(2, 0, 1, 3).contiguous().view(-1, len_q, d_k) # (n*b) x lq x dk
         q = torch.unsqueeze(q, dim=2) # [(n*b), lq, 1, dk]
         q = q.expand(q.shape[0], q.shape[1], len_k, q.shape[3]) # [(n*b), lq, lk, dk]
-        
+
         k = k.permute(2, 0, 1, 3).contiguous().view(-1, len_k, d_k) # (n*b) x lk x dk
         k = torch.unsqueeze(k, dim=1) # [(n*b), 1, lk, dk]
         k = k.expand(k.shape[0], len_q, k.shape[2], k.shape[3]) # [(n*b), lq, lk, dk]
-        
+
         v = v.permute(2, 0, 1, 3).contiguous().view(-1, len_v, d_v) # (n*b) x lv x dv
-        
+
         mask = mask.repeat(n_head, 1, 1) # (n*b) x lq x lk
-        
+
         ## Map based Attention
         #output, attn = self.attention(q, k, v, mask=mask)
         q_k = torch.cat([q, k], dim=3) # [(n*b), lq, lk, dk * 2]
         attn = self.weight_map(q_k).squeeze(dim=3) # [(n*b), lq, lk]
-        
+
         if mask is not None:
             attn = attn.masked_fill(mask, -1e10)
 
         attn = self.softmax(attn) # [n * b, l_q, l_k]
         attn = self.dropout(attn) # [n * b, l_q, l_k]
-        
+
         # [n * b, l_q, l_k] * [n * b, l_v, d_v] >> [n * b, l_q, d_v]
         output = torch.bmm(attn, v)
-        
+
         output = output.view(n_head, sz_b, len_q, d_v)
-        
+
         output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_q, -1) # b x lq x (n*dv)
 
         output = self.dropout(self.act(self.fc(output)))
         output = self.layer_norm(output + residual)
 
         return output, attn
-    
+
 def expand_last_dim(x, num):
     view_size = list(x.size()) + [1]
     expand_size = list(x.size()) + [num]

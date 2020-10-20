@@ -16,7 +16,7 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1020-1428'
+CODE_VERSION = '1020-1605'
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
@@ -198,4 +198,4 @@ if __name__ == "__main__":
         tgcn_model.ngh_finder = train_ngh_finder
         logging.info('--------------------------------------------------')
     logging.info('==================================================')
-    # test(data_set, model, test_data_loader)
+    test(tgcn_model, test_data_loader, fast_test=True)
