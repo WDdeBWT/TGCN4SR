@@ -2,7 +2,7 @@ import os
 import time
 import logging
 from multiprocessing import cpu_count
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 import tqdm
@@ -16,13 +16,13 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1020-1415'
+CODE_VERSION = '1020-1428'
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
-EPOCH = 30
-LR = 0.002
-BATCH_SIZE = 144
+EPOCH = 10
+LR = 0.003
+BATCH_SIZE = 4096
 NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 if cpu_count() <= 2:
@@ -31,13 +31,13 @@ if cpu_count() <= 2:
     NUM_WORKERS_SN = 2
 
 LAM = 1e-4
-FEATURE_DIM = 64
+FEATURE_DIM = 32
 EDGE_DIM = 8
-TIME_DIM = 32
-LAYERS = 3
+TIME_DIM = 32 - 8
+LAYERS = 2
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty
-AGG_METHOD = 'mix' # attn, lstm, mean, mix
+AGG_METHOD = 'attn' # attn, lstm, mean, mix
 ATTN_MODE = 'prod' # prod, map
 N_HEAD = 4
 DROP_OUT = 0.1

@@ -48,11 +48,11 @@ class ScaledDotProductAttention(torch.nn.Module):
 
         # logging.info(torch.sum(time_diff <= 1), torch.sum(time_diff == 1), torch.sum(time_diff == 0), time_diff.numel())
 
-        # time_diff = time_diff / time_diff.mean() # Try time diff
-        # time_diff = time_diff + nn.functional.softplus(self.time_plus_weight) * torch.max(time_diff) # Try time diff
-        # time_diff_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try time diff
+        time_diff = time_diff / time_diff.mean() # Try time diff
+        time_diff = time_diff + nn.functional.softplus(self.time_plus_weight) * torch.max(time_diff) # Try time diff
+        time_diff_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try time diff
 
-        # attn = attn + self.time_mul_weight * time_diff_weight # Try time diff
+        attn = attn + self.time_mul_weight * time_diff_weight # Try time diff
 
         # tdw_li = time_diff_weight.reshape(-1).tolist()
         # import matplotlib.pyplot as plt
