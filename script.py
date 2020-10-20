@@ -1,8 +1,10 @@
+import os
 import time
+import random
 import logging
 from multiprocessing import cpu_count
-import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 import tqdm
 import numpy as np
@@ -13,8 +15,12 @@ from model import TGCN
 from metrics import ndcg
 from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
+from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1013-1319'
+CODE_VERSION = '1016-1457'
+# random.seed(2020)
+# np.random.seed(2020)
+# torch.manual_seed(2020)
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
@@ -45,7 +51,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # register logging logger
 logger = logging.getLogger()
-logger.setLevel(level=logging.INFO)
+logger.setLevel(level=logging.DEBUG)
 time_line = time.strftime('%Y%m%d_%H:%M', time.localtime(time.time()))
 logfile = time_line + '_tgcn4sr.log'
 print('logfile', logfile)
@@ -56,7 +62,7 @@ console_h.setFormatter(formatter)
 logger.addHandler(console_h)
 if torch.cuda.is_available():
     logfile_h = logging.FileHandler(logfile, mode='w')
-    logfile_h.setLevel(logging.INFO)
+    logfile_h.setLevel(logging.DEBUG)
     logfile_h.setFormatter(formatter)
     logger.addHandler(logfile_h)
 
@@ -82,9 +88,11 @@ def train(model, data_loader, optimizer, log_interval=50):
         total_loss += loss.cpu().item()
         # t_e = time.time()
         # logging.info('train one step total time:' + str(t_e - t_s))
+        flag_false()
         if (i + 1) % log_interval == 0:
             logging.info('Train step: ' + str(i+1) + '/' + str(len(data_loader)) + ' - average loss:' + ' ' + str(total_loss / log_interval))
             total_loss = 0
+            flag_true()
     # logging.info('train loss:' + ' ' + str(total_loss / len(data_loader)))
     model.del_workers()
 
@@ -144,6 +152,7 @@ def test(model, data_loader, fast_test=False):
         ndcg_score = float(np.mean(ndcg_score))
         logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + str(ndcg_score))
         model.del_workers()
+    return ndcg_score
 
 
 if __name__ == "__main__":
@@ -180,7 +189,12 @@ if __name__ == "__main__":
         train(tgcn_model, train_data_loader, optimizer)
         tgcn_model.ngh_finder = test_ngh_finder
         evaluate(tgcn_model, valid_data_loader)
-        test(tgcn_model, test_data_loader, fast_test=True)
+        ndcg_score = test(tgcn_model, test_data_loader, fast_test=True)
+
+        if ndcg_score > 0.22:
+            logging.info('NDCG > 0.22, do retest')
+            test(tgcn_model, test_data_loader, fast_test=True)
+
         tgcn_model.ngh_finder = train_ngh_finder
         logging.info('--------------------------------------------------')
     logging.info('==================================================')

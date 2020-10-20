@@ -218,13 +218,12 @@ def data_partition_amz(dataset_name='newAmazon'):
 
 if __name__ == "__main__":
     adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz()
-    import matplotlib.pyplot as plt
-    degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])
-    plt.hist(x = degree_list, range=(0, 199), bins=100, color='steelblue', edgecolor='black')
-    # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
-    # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
-    plt.show()
-    exit(0)
+    # import matplotlib.pyplot as plt
+    # degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])
+    # plt.hist(x = degree_list, range=(0, 199), bins=100, color='steelblue', edgecolor='black')
+    # # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
+    # # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
+    # plt.show()
 
     total = 0
     hit = 0
@@ -232,12 +231,11 @@ if __name__ == "__main__":
         if u >= n_user or u == 13:
             continue
         sorted_tuple = sorted(adj_list_tavat[u], key=lambda x: x[2])
-        assert u in test_candidate
-        x = sorted_tuple[-1]
-        i_t = x[0]
-        # assert i_t in test_candidate[u]
-        u2_i = [x[0] for x in adj_list_tandv[u]]
-        if i_t in u2_i:
-            hit += 1
-        total += 1
-    print(hit, total)
+        last_ts = 0
+        for line in sorted_tuple:
+            if line[2] == last_ts + 1:
+                hit += 1
+            total += 1
+            last_ts = line[2]
+    print(total)
+    print(hit)

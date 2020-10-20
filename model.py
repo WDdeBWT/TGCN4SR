@@ -9,6 +9,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from joblib import Parallel, delayed
 
+from global_flag import get_flag
+
+
 class MergeLayer(torch.nn.Module):
     def __init__(self, dim1, dim2, dim3, dim4):
         super().__init__()
@@ -19,7 +22,7 @@ class MergeLayer(torch.nn.Module):
 
         torch.nn.init.xavier_normal_(self.fc1.weight)
         torch.nn.init.xavier_normal_(self.fc2.weight)
-        
+
     def forward(self, x1, x2):
         x = torch.cat([x1, x2], dim=1)
         #x = self.layer_norm(x)
@@ -36,19 +39,38 @@ class ScaledDotProductAttention(torch.nn.Module):
         self.dropout = torch.nn.Dropout(attn_dropout)
         self.softmax = torch.nn.Softmax(dim=2)
 
-    def forward(self, q, k, v, mask=None):
+        self.time_plus_weight = nn.Parameter(torch.zeros(1)) # Try
+        self.time_mul_weight = nn.Parameter(torch.ones(1)) # Try
 
+    def forward(self, q, k, v, time_diff, mask=None): # Try
         attn = torch.bmm(q, k.transpose(1, 2))
         attn = attn / self.temperature
+
+        # logging.info(torch.sum(time_diff <= 1), torch.sum(time_diff == 1), torch.sum(time_diff == 0), time_diff.numel())
+
+        time_diff = time_diff / time_diff.mean() # Try
+        time_diff = time_diff + nn.functional.softplus(self.time_plus_weight) * torch.max(time_diff) # Try
+        time_diff_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try
+
+        attn = attn + self.time_mul_weight * time_diff_weight # Try
+
+        # tdw_li = time_diff_weight.reshape(-1).tolist()
+        # import matplotlib.pyplot as plt
+        # # plt.hist(x = tdw_li, range=(0.99, 1.01), bins=100, color='steelblue', edgecolor='black')
+        # plt.hist(x = tdw_li, bins=10, color='steelblue', edgecolor='black')
+        # # # plt.hist(x = tdw_li, color='steelblue', edgecolor='black')
+        # plt.show()
+
+        # exit(0)
 
         if mask is not None:
             attn = attn.masked_fill(mask, -1e10)
 
         attn = self.softmax(attn) # [n * b, l_q, l_k]
         attn = self.dropout(attn) # [n * b, l_v, d]
-                
+
         output = torch.bmm(attn, v)
-        
+
         return output, attn
 
 class MultiHeadAttention(nn.Module):
@@ -72,13 +94,13 @@ class MultiHeadAttention(nn.Module):
         self.layer_norm = nn.LayerNorm(d_model)
 
         self.fc = nn.Linear(n_head * d_v, d_model)
-        
+
         nn.init.xavier_normal_(self.fc.weight)
 
         self.dropout = nn.Dropout(dropout)
 
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q, k, v, time_diff, mask=None): # Try
 
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
 
@@ -97,15 +119,16 @@ class MultiHeadAttention(nn.Module):
         v = v.permute(2, 0, 1, 3).contiguous().view(-1, len_v, d_v) # (n*b) x lv x dv
 
         mask = mask.repeat(n_head, 1, 1) # (n*b) x .. x ..
-        output, attn = self.attention(q, k, v, mask=mask)
+        time_diff = time_diff.view(time_diff.shape[0], 1, time_diff.shape[1]).repeat(n_head, 1, 1) # Try
+        output, attn = self.attention(q, k, v, time_diff, mask=mask) # Try
 
         output = output.view(n_head, sz_b, len_q, d_v)
 
         output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_q, -1) # b x lq x (n*dv)
 
         output = self.dropout(self.fc(output))
-        output = self.layer_norm(output + residual)
-        #output = self.layer_norm(output)
+        # output = self.layer_norm(output + residual)
+        output = self.layer_norm(output)
 
         return output, attn
 
@@ -271,7 +294,7 @@ class LSTMPool(torch.nn.Module):
                                   batch_first=True)
         self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, mask):
+    def forward(self, src, src_t, seq, seq_t, seq_e, _, mask): # Try
         # seq [B, N, D]
         # mask [B, N]
         # seq_x = torch.cat([seq, seq_e, seq_t], dim=2)
@@ -293,7 +316,7 @@ class MeanPool(torch.nn.Module):
         self.act = torch.nn.ReLU()
         self.merger = MergeLayer(edge_dim + feat_dim, feat_dim, feat_dim, feat_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, mask):
+    def forward(self, src, src_t, seq, seq_t, seq_e, _, mask): # Try
         # seq [B, N, D]
         # mask [B, N]
         src_x = src
@@ -352,8 +375,7 @@ class AttnModel(torch.nn.Module):
         else:
             raise ValueError('attn_mode can only be prod or map')
         
-        
-    def forward(self, src, src_t, seq, seq_t, seq_e, mask):
+    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask): # Try
         """"Attention based temporal attention forward pass
         args:
           src: float Tensor of shape [B, D]
@@ -373,14 +395,15 @@ class AttnModel(torch.nn.Module):
         src_ext = torch.unsqueeze(src, dim=1) # src [B, 1, D]
         # src_e_ph = torch.zeros_like(src_ext)
         src_e_ph = torch.zeros(src_ext.shape[0], src_ext.shape[1], self.edge_dim).to(src_ext)
-        q = torch.cat([src_ext, src_e_ph, src_t], dim=2) # [B, 1, D + De + Dt] -> [B, 1, D]
-        k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, 1, D + De + Dt] -> [B, 1, D]
+        q = torch.cat([src_ext, src_e_ph, src_t], dim=2) # [B, 1, D + De + Dt]
+        k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, N, D + De + Dt]
 
         mask = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
         mask = mask.permute([0, 2, 1]) #mask [B, 1, N]
 
         # # target-attention
-        output, attn = self.multi_head_target(q=q, k=k, v=k, mask=mask) # output: [B, 1, D + Dt], attn: [B, 1, N]
+        # output, attn = self.multi_head_target(q=q, k=k, v=k, mask=mask) # output: [B, 1, D + Dt], attn: [B, 1, N]
+        output, attn = self.multi_head_target(q=q, k=k, v=k, time_diff=time_diff, mask=mask) # Try
         output = output.squeeze()
         attn = attn.squeeze()
 
@@ -397,11 +420,11 @@ class MixModel(torch.nn.Module):
         self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, attn_mode, n_head, drop_out)
         self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, mask):
-        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, mask)
-        lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, mask)
+    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask): # Try
+        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask) # Try
+        lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, time_diff, mask) # Try
 
-        output = (attn_result + lstm_result) / 2
+        output = (attn_result + lstm_result) / 2 # TODO: better merge
         return output, None
 
 
@@ -524,6 +547,7 @@ class TGCN(torch.nn.Module):
         pos_scores = torch.sum(src_embed * tgt_embed, dim=1)
         neg_scores = torch.sum(src_embed * neg_embed, dim=1)
         loss = torch.mean(nn.functional.softplus(neg_scores - pos_scores))
+        # loss = torch.mean(torch.log(1 + torch.exp(neg_scores - pos_scores))) # same as softplus
         # reg_loss = (1/2) * reg_loss / float(len(users))
         return loss
 
@@ -560,11 +584,11 @@ class TGCN(torch.nn.Module):
         if curr_layers == 0:
             return src_node_feat
         else:
-            src_node_conv_feat = self.tem_conv(src_nodes, 
-                                           cut_times,
-                                           curr_layers=curr_layers - 1, 
-                                           num_neighbors=num_neighbors)
-            
+            src_node_conv_feat = self.tem_conv(src_nodes,
+                                               cut_times,
+                                               curr_layers=curr_layers - 1,
+                                               num_neighbors=num_neighbors)
+
 
             if self.num_workers is None:
                 src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.ngh_finder.get_temporal_neighbor(src_nodes,
@@ -601,6 +625,7 @@ class TGCN(torch.nn.Module):
                                    src_ngh_feat,
                                    src_ngh_t_embed,
                                    src_ngn_edge_feat,
+                                   src_ngh_t_batch_th, # Try
                                    mask)
             return local
 
@@ -616,7 +641,7 @@ class TGCN(torch.nn.Module):
                 if i == 0:
                     part_list_node.append(src_nodes[: batch_size])
                     part_list_time.append(cut_times[: batch_size])
-                elif i == n_workers-1:
+                elif i == n_workers - 1:
                     part_list_node.append(src_nodes[i * batch_size:])
                     part_list_time.append(cut_times[i * batch_size:])
                 else:

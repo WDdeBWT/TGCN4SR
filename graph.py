@@ -69,8 +69,13 @@ class NeighborFinder:
 
             if len(source_neighbors) > 0 and n_neighbors > 0:
                 if self.uniform: # if we are applying uniform sampling, shuffles the data above before sampling
-                    sampled_idx = np.random.randint(
-                        0, len(source_neighbors), n_neighbors)
+                    sampled_idx = np.random.randint(0, len(source_neighbors), n_neighbors)
+                    # if n_neighbors <= len(source_neighbors):
+                    #     sampled_idx = np.random.choice(len(source_neighbors), n_neighbors)
+                    # else:
+                    #     sampled_idx_1 = np.arange(len(source_neighbors))
+                    #     sampled_idx_2 = np.random.randint(0, len(source_neighbors), n_neighbors - len(source_neighbors))
+                    #     sampled_idx = np.concatenate((sampled_idx_1, sampled_idx_2))
 
                     out_neighbors[i, :] = source_neighbors[sampled_idx]
                     out_timestamps[i, :] = source_edge_times[sampled_idx]
