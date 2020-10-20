@@ -3,6 +3,7 @@ test.py
 *.sh
 *.pth
 .vscode/
+exclude.txt
 
 data/
 

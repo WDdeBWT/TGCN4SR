@@ -3,7 +3,7 @@ import time
 import random
 import logging
 from multiprocessing import cpu_count
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 import tqdm
@@ -17,7 +17,7 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1016-1457'
+CODE_VERSION = '1020-1335'
 # random.seed(2020)
 # np.random.seed(2020)
 # torch.manual_seed(2020)
@@ -71,9 +71,9 @@ def train(model, data_loader, optimizer, log_interval=50):
     model.train()
     model.init_workers()
     total_loss = 0
-    for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(tqdm.tqdm(data_loader)):
-    # for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(data_loader):
-        # t_s = time.time()
+    t_s = time.time()
+    # for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(tqdm.tqdm(data_loader)):
+    for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(data_loader):
         user_id = user_id.numpy()
         pos_id = pos_id.numpy()
         neg_id = neg_id.numpy()
@@ -90,7 +90,11 @@ def train(model, data_loader, optimizer, log_interval=50):
         # logging.info('train one step total time:' + str(t_e - t_s))
         flag_false()
         if (i + 1) % log_interval == 0:
-            logging.info('Train step: ' + str(i+1) + '/' + str(len(data_loader)) + ' - average loss:' + ' ' + str(total_loss / log_interval))
+            # logging.info('Train step: ' + str(i+1) + '/' + str(len(data_loader)) + ' - average loss:' + ' ' + str(total_loss / log_interval))
+            avg_loss = total_loss / log_interval
+            d_time = time.time() - t_s
+            logging.info('Train step: ' + str(i+1) + '/' + str(len(data_loader)) + ' - avg loss: ' + '%.3f' % avg_loss + ' - time: ' + '%.2f' % d_time + 's')
+            t_s = time.time()
             total_loss = 0
             flag_true()
     # logging.info('train loss:' + ' ' + str(total_loss / len(data_loader)))
@@ -112,7 +116,7 @@ def evaluate(model, data_loader):
             loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
             total_loss += loss.cpu().item()
         avg_loss = total_loss / len(data_loader)
-        logging.info('evaluate loss:' + str(avg_loss))
+        logging.info('evaluate loss: ' + '%.3f' % avg_loss)
         model.del_workers()
 
 
@@ -150,7 +154,7 @@ def test(model, data_loader, fast_test=False):
                     #     print(str(tgt) + ' - ' + str(topk_ids))
                     #     print(str(hit) + '/' + str(total))
         ndcg_score = float(np.mean(ndcg_score))
-        logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + str(ndcg_score))
+        logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + '%.4f' % ndcg_score)
         model.del_workers()
     return ndcg_score
 
