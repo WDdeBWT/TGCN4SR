@@ -74,6 +74,7 @@ class ScaledDotProductAttention(torch.nn.Module):
 
         return output, attn
 
+
 class MultiHeadAttention(nn.Module):
     ''' Multi-Head Attention module '''
 
@@ -162,7 +163,6 @@ class MapBasedMultiHeadAttention(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-
     def forward(self, q, k, v, mask=None):
 
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
@@ -225,7 +225,7 @@ class TimeEncode(torch.nn.Module):
     def __init__(self, expand_dim, factor=5):
         super(TimeEncode, self).__init__()
         #init_len = np.array([1e8**(i/(time_dim-1)) for i in range(time_dim)])
-        
+
         time_dim = expand_dim
         self.factor = factor
         self.basis_freq = torch.nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim))).float())
