@@ -17,7 +17,7 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1020-1404'
+CODE_VERSION = '1020-1415'
 # random.seed(2020)
 # np.random.seed(2020)
 # torch.manual_seed(2020)
@@ -26,7 +26,7 @@ DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
 EPOCH = 30
 LR = 0.002
-BATCH_SIZE = 256
+BATCH_SIZE = 144
 NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 if cpu_count() <= 2:
