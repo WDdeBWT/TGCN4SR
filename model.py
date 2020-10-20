@@ -616,6 +616,7 @@ class TGCN(torch.nn.Module):
             src_ngh_feat = src_ngh_node_conv_feat.view(batch_size, num_neighbors, -1)
             if self.num_layers >= 3 and curr_distance + 1 == self.num_layers:
                 src_ngh_feat = src_ngh_feat[:, 10:, :]
+                src_ngh_node_batch_th = src_ngh_node_batch_th[:, 10:]
                 src_ngh_t_batch_th = src_ngh_t_batch_th[:, 10:]
                 src_ngh_eidx_batch = src_ngh_eidx_batch[:, 10:]
 
