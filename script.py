@@ -1,6 +1,5 @@
 import os
 import time
-import random
 import logging
 from multiprocessing import cpu_count
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
@@ -18,9 +17,6 @@ from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
 CODE_VERSION = '1020-1415'
-# random.seed(2020)
-# np.random.seed(2020)
-# torch.manual_seed(2020)
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
