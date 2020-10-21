@@ -42,32 +42,22 @@ class ScaledDotProductAttention(torch.nn.Module):
         self.time_plus_weight = nn.Parameter(torch.zeros(1)) # Try time diff
         self.time_mul_weight = nn.Parameter(torch.ones(1)) # Try time diff
 
-    def forward(self, q, k, v, time_diff, mask=None): # Try time diff
+    def forward(self, q, k, v, time_diff=None, mask=None): # Try time diff
         attn = torch.bmm(q, k.transpose(1, 2))
         attn = attn / self.temperature
-
-        # logging.info(torch.sum(time_diff <= 1), torch.sum(time_diff == 1), torch.sum(time_diff == 0), time_diff.numel())
-
-        time_diff = time_diff / time_diff.mean() # Try time diff
-        time_diff = time_diff + nn.functional.softplus(self.time_plus_weight) * torch.max(time_diff) # Try time diff
-        time_diff_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try time diff
-
-        # tdw_li = time_diff_weight.reshape(-1).tolist()
-        # import matplotlib.pyplot as plt
-        # # plt.hist(x = tdw_li, range=(0.99, 1.01), bins=100, color='steelblue', edgecolor='black')
-        # plt.hist(x = tdw_li, bins=10, color='steelblue', edgecolor='black')
-        # # # plt.hist(x = tdw_li, color='steelblue', edgecolor='black')
-        # plt.show()
-
-        # exit(0)
-
         if torch.sum(mask) != 0:
             attn = attn.masked_fill(mask, -1e10)
-            time_diff_weight = time_diff_weight.masked_fill(mask, -1e10) # Try time diff
-
         attn = self.softmax(attn) # [n * b, l_q, l_k]
-        time_diff_weight = self.softmax(time_diff_weight) # Try time diff
-        attn = (attn + self.time_mul_weight * time_diff_weight) / (1 + self.time_mul_weight) # Try time diff
+
+        if time_diff is not None:
+            time_diff = time_diff / time_diff.mean() # Try time diff
+            time_diff = time_diff + nn.functional.softplus(self.time_plus_weight) * torch.max(time_diff) # Try time diff
+            time_diff_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try time diff
+            if torch.sum(mask) != 0:
+                time_diff_weight = time_diff_weight.masked_fill(mask, -1e10) # Try time diff
+            time_diff_weight = self.softmax(time_diff_weight) # Try time diff
+            attn = (attn + self.time_mul_weight * time_diff_weight) / (1 + self.time_mul_weight) # Try time diff
+
         attn = self.dropout(attn) # [n * b, l_v, d]
 
         output = torch.bmm(attn, v)
@@ -102,7 +92,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
 
-    def forward(self, q, k, v, time_diff, mask=None): # Try time diff
+    def forward(self, q, k, v, time_diff=None, mask=None): # Try time diff
 
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
 
@@ -121,7 +111,8 @@ class MultiHeadAttention(nn.Module):
         v = v.permute(2, 0, 1, 3).contiguous().view(-1, len_v, d_v) # (n*b) x lv x dv
 
         mask = mask.repeat(n_head, 1, 1) # (n*b) x .. x ..
-        time_diff = time_diff.view(time_diff.shape[0], 1, time_diff.shape[1]).repeat(n_head, 1, 1) # Try time diff
+        if time_diff is not None:
+            time_diff = time_diff.view(time_diff.shape[0], 1, time_diff.shape[1]).repeat(n_head, 1, 1) # Try time diff
         output, attn = self.attention(q, k, v, time_diff, mask=mask) # Try time diff
 
         output = output.view(n_head, sz_b, len_q, d_v)
@@ -431,7 +422,7 @@ class MixModel(torch.nn.Module):
 
 
 class TGCN(torch.nn.Module):
-    def __init__(self, ngh_finder, feat_dim, edge_dim, time_dim, n_node, n_edge, device='cpu', num_layers=3, num_workers=0,
+    def __init__(self, ngh_finder, feat_dim, edge_dim, time_dim, n_node, n_edge, device='cpu', num_layers=3, use_td=False, num_workers=0,
                  pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None):
         super(TGCN, self).__init__()
         self.workers_alive = False
@@ -442,6 +433,7 @@ class TGCN(torch.nn.Module):
         self.time_dim = time_dim # time_dim
         self.device = device
         self.num_layers = num_layers
+        self.use_td = use_td
 
         if num_workers is None:
             self.num_workers = None
@@ -629,12 +621,17 @@ class TGCN(torch.nn.Module):
             mask = src_ngh_node_batch_th == 0
             attn_m = self.attn_model_list[curr_layers - 1]
 
+            if self.use_td:
+                time_diff = src_ngh_t_batch_th
+            else:
+                time_diff = None
+
             local, weight = attn_m(src_node_conv_feat,
                                    src_node_t_embed,
                                    src_ngh_feat,
                                    src_ngh_t_embed,
                                    src_ngn_edge_feat,
-                                   src_ngh_t_batch_th, # Try time diff
+                                   time_diff, # Try time diff
                                    mask)
             return local
 
