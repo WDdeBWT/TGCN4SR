@@ -16,13 +16,13 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1021-1423'
+CODE_VERSION = '1021-2022'
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
 EPOCH = 30
 LR = 0.002
-BATCH_SIZE = 2048
+BATCH_SIZE = 1024
 NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 if cpu_count() <= 2:
@@ -64,7 +64,7 @@ if torch.cuda.is_available():
     logger.addHandler(logfile_h)
 
 
-def train(model, data_loader, optimizer, log_interval=50):
+def train(model, data_loader, optimizer, log_interval=100):
     model.train()
     model.init_workers()
     total_loss = 0

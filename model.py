@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from joblib import Parallel, delayed
 
 from global_flag import get_flag
+from order_encoder import TimeEncode, PosEncode, EmptyEncode
 
 
 class MergeLayer(torch.nn.Module):
@@ -59,9 +60,7 @@ class ScaledDotProductAttention(torch.nn.Module):
             attn = (attn + self.time_mul_weight * time_diff_weight) / (1 + self.time_mul_weight) # Try time diff
 
         attn = self.dropout(attn) # [n * b, l_v, d]
-
         output = torch.bmm(attn, v)
-
         return output, attn
 
 
@@ -92,7 +91,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
 
-    def forward(self, q, k, v, time_diff=None, mask=None): # Try time diff
+    def forward(self, q, k, v, time_diff=None, mask=None, use_res=False): # Try time diff
 
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
 
@@ -120,152 +119,11 @@ class MultiHeadAttention(nn.Module):
         output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_q, -1) # b x lq x (n*dv)
 
         output = self.dropout(self.fc(output))
-        # output = self.layer_norm(output + residual)
+        if use_res:
+            output = output + residual
         output = self.layer_norm(output)
 
         return output, attn
-
-
-class MapBasedMultiHeadAttention(nn.Module):
-    ''' Multi-Head Attention module '''
-
-    def __init__(self, n_head, d_model, d_k, d_v, dropout=0.1):
-        super().__init__()
-
-        self.n_head = n_head
-        self.d_k = d_k
-        self.d_v = d_v
-
-        self.wq_node_transform = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.wk_node_transform = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.wv_node_transform = nn.Linear(d_model, n_head * d_k, bias=False)
-
-        self.layer_norm = nn.LayerNorm(d_model)
-
-        self.fc = nn.Linear(n_head * d_v, d_model)
-
-        self.act = nn.LeakyReLU(negative_slope=0.2)
-        self.weight_map = nn.Linear(2 * d_k, 1, bias=False)
-
-        nn.init.xavier_normal_(self.fc.weight)
-
-        self.dropout = torch.nn.Dropout(dropout)
-        self.softmax = torch.nn.Softmax(dim=2)
-
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, q, k, v, mask=None):
-
-        d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
-
-        sz_b, len_q, _ = q.size()
-    
-        sz_b, len_k, _ = k.size()
-        sz_b, len_v, _ = v.size()
-
-        residual = q
-
-        q = self.wq_node_transform(q).view(sz_b, len_q, n_head, d_k)
-
-        k = self.wk_node_transform(k).view(sz_b, len_k, n_head, d_k)
-
-        v = self.wv_node_transform(v).view(sz_b, len_v, n_head, d_v)
-
-        q = q.permute(2, 0, 1, 3).contiguous().view(-1, len_q, d_k) # (n*b) x lq x dk
-        q = torch.unsqueeze(q, dim=2) # [(n*b), lq, 1, dk]
-        q = q.expand(q.shape[0], q.shape[1], len_k, q.shape[3]) # [(n*b), lq, lk, dk]
-
-        k = k.permute(2, 0, 1, 3).contiguous().view(-1, len_k, d_k) # (n*b) x lk x dk
-        k = torch.unsqueeze(k, dim=1) # [(n*b), 1, lk, dk]
-        k = k.expand(k.shape[0], len_q, k.shape[2], k.shape[3]) # [(n*b), lq, lk, dk]
-
-        v = v.permute(2, 0, 1, 3).contiguous().view(-1, len_v, d_v) # (n*b) x lv x dv
-
-        mask = mask.repeat(n_head, 1, 1) # (n*b) x lq x lk
-
-        ## Map based Attention
-        #output, attn = self.attention(q, k, v, mask=mask)
-        q_k = torch.cat([q, k], dim=3) # [(n*b), lq, lk, dk * 2]
-        attn = self.weight_map(q_k).squeeze(dim=3) # [(n*b), lq, lk]
-
-        if mask is not None:
-            attn = attn.masked_fill(mask, -1e10)
-
-        attn = self.softmax(attn) # [n * b, l_q, l_k]
-        attn = self.dropout(attn) # [n * b, l_q, l_k]
-
-        # [n * b, l_q, l_k] * [n * b, l_v, d_v] >> [n * b, l_q, d_v]
-        output = torch.bmm(attn, v)
-
-        output = output.view(n_head, sz_b, len_q, d_v)
-
-        output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_q, -1) # b x lq x (n*dv)
-
-        output = self.dropout(self.act(self.fc(output)))
-        output = self.layer_norm(output + residual)
-
-        return output, attn
-
-def expand_last_dim(x, num):
-    view_size = list(x.size()) + [1]
-    expand_size = list(x.size()) + [num]
-    return x.view(view_size).expand(expand_size)
-
-
-class TimeEncode(torch.nn.Module):
-    def __init__(self, expand_dim, factor=5):
-        super(TimeEncode, self).__init__()
-        #init_len = np.array([1e8**(i/(time_dim-1)) for i in range(time_dim)])
-
-        time_dim = expand_dim
-        self.factor = factor
-        self.basis_freq = torch.nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim))).float())
-        self.phase = torch.nn.Parameter(torch.zeros(time_dim).float())
-
-        #self.dense = torch.nn.Linear(time_dim, expand_dim, bias=False)
-
-        #torch.nn.init.xavier_normal_(self.dense.weight)
-
-    def forward(self, ts):
-        # ts: [N, L]
-        batch_size = ts.size(0)
-        seq_len = ts.size(1)
-
-        ts = ts.view(batch_size, seq_len, 1)# [N, L, 1]
-        map_ts = ts * self.basis_freq.view(1, 1, -1) # [N, L, time_dim]
-        map_ts += self.phase.view(1, 1, -1)
-
-        harmonic = torch.cos(map_ts)
-
-        return harmonic #self.dense(harmonic)
-
-
-class PosEncode(torch.nn.Module):
-    def __init__(self, expand_dim, seq_len):
-        super().__init__()
-        self.pos_embeddings = nn.Embedding(num_embeddings=seq_len + 1, embedding_dim=expand_dim) # +1 for ts = 0
-        self.seq_len = seq_len
-
-    def forward(self, ts):
-        # ts: [N, L]
-        if torch.sum(torch.zeros_like(ts) == ts) == ts.numel():
-            order = ts.long() + self.seq_len
-        else:
-            order = ts.argsort()
-        ts_emb = self.pos_embeddings(order)
-        return ts_emb
-
-
-class EmptyEncode(torch.nn.Module):
-    def __init__(self, expand_dim):
-        super().__init__()
-        self.expand_dim = expand_dim
-
-    def forward(self, ts):
-        out = torch.zeros_like(ts).float()
-        out = torch.unsqueeze(out, dim=-1)
-        out = out.expand(out.shape[0], out.shape[1], self.expand_dim)
-        return out
 
 
 class LSTMPool(torch.nn.Module):
@@ -340,6 +198,7 @@ class AttnModel(torch.nn.Module):
 
         self.edge_in_dim = (feat_dim + edge_dim + time_dim)
         self.model_dim = self.edge_in_dim
+        self.transformer_dim = feat_dim + time_dim
         #self.edge_fc = torch.nn.Linear(self.edge_in_dim, self.feat_dim, bias=False)
 
         self.merger = MergeLayer(self.model_dim, feat_dim, feat_dim, feat_dim)
@@ -349,6 +208,11 @@ class AttnModel(torch.nn.Module):
         assert(self.model_dim % n_head == 0)
         self.attn_mode = attn_mode
 
+        self.transformer_modules = nn.ModuleList([
+            MultiHeadAttention(n_head, self.transformer_dim, self.transformer_dim // n_head,
+                               self.transformer_dim // n_head, dropout=drop_out)
+            for _ in range(2)])
+
         if attn_mode == 'prod':
             self.multi_head_target = MultiHeadAttention(n_head,
                                              d_model=self.model_dim,
@@ -356,14 +220,6 @@ class AttnModel(torch.nn.Module):
                                              d_v=self.model_dim // n_head,
                                              dropout=drop_out)
             logging.info('Using scaled prod attention')
-
-        elif attn_mode == 'map':
-            self.multi_head_target = MapBasedMultiHeadAttention(n_head,
-                                             d_model=self.model_dim,
-                                             d_k=self.model_dim // n_head,
-                                             d_v=self.model_dim // n_head,
-                                             dropout=drop_out)
-            logging.info('Using map based attention')
         else:
             raise ValueError('attn_mode can only be prod or map')
         
@@ -388,10 +244,15 @@ class AttnModel(torch.nn.Module):
         # src_e_ph = torch.zeros_like(src_ext)
         src_e_ph = torch.zeros(src_ext.shape[0], src_ext.shape[1], self.edge_dim).to(src_ext)
         q = torch.cat([src_ext, src_e_ph, src_t], dim=2) # [B, 1, D + De + Dt]
-        k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, N, D + De + Dt]
+        # k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, N, D + De + Dt]
 
         mask = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
         mask = mask.permute([0, 2, 1]) #mask [B, 1, N]
+
+        t_k = torch.cat([seq, seq_t], dim=2) # [B, N, D + De + Dt]
+        for i in range(2):
+            t_k, attn = self.transformer_modules[i](q=t_k, k=t_k, v=t_k, time_diff=None, mask=mask, use_res=True)
+        k = torch.cat((t_k[:, :, :seq.shape[2]], seq_e, t_k[:, :, seq.shape[2]:]), dim=-1)
 
         # # target-attention
         # output, attn = self.multi_head_target(q=q, k=k, v=k, mask=mask) # output: [B, 1, D + Dt], attn: [B, 1, N]
