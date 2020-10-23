@@ -16,13 +16,13 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1021-2022'
+CODE_VERSION = '1023-1038'
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
-EPOCH = 30
-LR = 0.002
-BATCH_SIZE = 1024
+EPOCH = 20
+LR = 0.001
+BATCH_SIZE = 2048
 NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 if cpu_count() <= 2:
@@ -41,7 +41,9 @@ AGG_METHOD = 'attn' # attn, lstm, mean, mix
 ATTN_MODE = 'prod' # prod, map
 N_HEAD = 4
 DROP_OUT = 0.1
-USE_TD = False
+USE_TD = False # use time_diff
+SA_LAYERS = 0 # self_attn layers
+UNIFORM = False
 
 # GPU / CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -65,10 +67,11 @@ if torch.cuda.is_available():
 
 
 def train(model, data_loader, optimizer, log_interval=100):
+    time_start = time.time()
     model.train()
     model.init_workers()
     total_loss = 0
-    t_s = time.time()
+    time_one_interval = time.time()
     # for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(tqdm.tqdm(data_loader)):
     for i, (user_id, pos_id, neg_id, time_stamp) in enumerate(data_loader):
         user_id = user_id.numpy()
@@ -76,26 +79,21 @@ def train(model, data_loader, optimizer, log_interval=100):
         neg_id = neg_id.numpy()
         time_stamp = time_stamp.numpy()
         loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
-        # logging.info('train loss ' + str(i) + '/' + str(len(data_loader)) + ': ' + str(loss))
         model.zero_grad()
-        # time_start = time.time()
         loss.backward()
-        # logging.info('loss.backward time:' + str(time.time() - time_start))
         optimizer.step()
         total_loss += loss.cpu().item()
-        # t_e = time.time()
-        # logging.info('train one step total time:' + str(t_e - t_s))
         flag_false()
         if (i + 1) % log_interval == 0:
-            # logging.info('Train step: ' + str(i+1) + '/' + str(len(data_loader)) + ' - average loss:' + ' ' + str(total_loss / log_interval))
             avg_loss = total_loss / log_interval
-            d_time = time.time() - t_s
+            d_time = time.time() - time_one_interval
             logging.info('Train step: ' + str(i+1) + '/' + str(len(data_loader)) + ' - avg loss: ' + '%.3f' % avg_loss + ' - time: ' + '%.2f' % d_time + 's')
-            t_s = time.time()
+            time_one_interval = time.time()
             total_loss = 0
             flag_true()
-    # logging.info('train loss:' + ' ' + str(total_loss / len(data_loader)))
     model.del_workers()
+    total_time = time.time() - time_start
+    logging.info('Train one epoch time: ' + '%.2f' % total_time + 's')
 
 
 def evaluate(model, data_loader):
@@ -146,10 +144,6 @@ def test(model, data_loader, fast_test=False):
                 total += 1
                 if tgt in topk_ids:
                     hit += 1
-                    # # Test
-                    # if hit > 100 and hit > total / 2:
-                    #     print(str(tgt) + ' - ' + str(topk_ids))
-                    #     print(str(hit) + '/' + str(total))
         ndcg_score = float(np.mean(ndcg_score))
         logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + '%.4f' % ndcg_score)
         model.del_workers()
@@ -169,8 +163,8 @@ if __name__ == "__main__":
     valid_data_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS_DL)
     test_data_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS_DL)
 
-    train_ngh_finder = NeighborFinder(adj_list_train, n_user, n_item, True) # Initialize training neighbor finder(use train edges)
-    test_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, True) # Initialize test neighbor finder(use train and valid edges)
+    train_ngh_finder = NeighborFinder(adj_list_train, n_user, n_item, uniform=UNIFORM) # Initialize training neighbor finder(use train edges)
+    test_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, uniform=UNIFORM) # Initialize test neighbor finder(use train and valid edges)
 
     if POS_ENCODER == 'pos':
         seq_len = 0
@@ -182,7 +176,7 @@ if __name__ == "__main__":
 
     tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, EDGE_DIM, TIME_DIM, n_user+n_item, 2, device, LAYERS, USE_TD, NUM_WORKERS_SN,
                       pos_encoder=POS_ENCODER, agg_method=AGG_METHOD, attn_mode=ATTN_MODE,
-                      n_head=N_HEAD, drop_out=DROP_OUT, seq_len=seq_len).to(device)
+                      n_head=N_HEAD, drop_out=DROP_OUT, seq_len=seq_len, sa_layers=SA_LAYERS).to(device)
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
 
     for epoch_i in range(EPOCH):
@@ -199,4 +193,5 @@ if __name__ == "__main__":
         tgcn_model.ngh_finder = train_ngh_finder
         logging.info('--------------------------------------------------')
     logging.info('==================================================')
+    tgcn_model.ngh_finder = test_ngh_finder
     test(tgcn_model, test_data_loader, fast_test=True)

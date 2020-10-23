@@ -180,7 +180,7 @@ class AttnModel(torch.nn.Module):
     """Attention based temporal layers
     """
     def __init__(self, feat_dim, edge_dim, time_dim, 
-                 attn_mode='prod', n_head=2, drop_out=0.1):
+                 attn_mode='prod', n_head=2, drop_out=0.1, sa_layers=0):
         """
         args:
           feat_dim: dim for the node features
@@ -208,10 +208,12 @@ class AttnModel(torch.nn.Module):
         assert(self.model_dim % n_head == 0)
         self.attn_mode = attn_mode
 
-        self.transformer_modules = nn.ModuleList([
-            MultiHeadAttention(n_head, self.transformer_dim, self.transformer_dim // n_head,
-                               self.transformer_dim // n_head, dropout=drop_out)
-            for _ in range(2)])
+        self.sa_layers = sa_layers # use self-attention
+        if sa_layers != 0:
+            self.transformer_modules = nn.ModuleList([
+                MultiHeadAttention(n_head, self.transformer_dim, self.transformer_dim // n_head,
+                                self.transformer_dim // n_head, dropout=drop_out)
+                for _ in range(sa_layers)])
 
         if attn_mode == 'prod':
             self.multi_head_target = MultiHeadAttention(n_head,
@@ -240,19 +242,21 @@ class AttnModel(torch.nn.Module):
           weight: float Tensor of shape [B, N]
         """
 
+        mask = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
+        mask = mask.permute([0, 2, 1]) #mask [B, 1, N]
+
         src_ext = torch.unsqueeze(src, dim=1) # src [B, 1, D]
         # src_e_ph = torch.zeros_like(src_ext)
         src_e_ph = torch.zeros(src_ext.shape[0], src_ext.shape[1], self.edge_dim).to(src_ext)
         q = torch.cat([src_ext, src_e_ph, src_t], dim=2) # [B, 1, D + De + Dt]
-        # k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, N, D + De + Dt]
 
-        mask = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
-        mask = mask.permute([0, 2, 1]) #mask [B, 1, N]
-
-        t_k = torch.cat([seq, seq_t], dim=2) # [B, N, D + De + Dt]
-        for i in range(2):
-            t_k, attn = self.transformer_modules[i](q=t_k, k=t_k, v=t_k, time_diff=None, mask=mask, use_res=True)
-        k = torch.cat((t_k[:, :, :seq.shape[2]], seq_e, t_k[:, :, seq.shape[2]:]), dim=-1)
+        if self.sa_layers == 0:
+            k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, N, D + De + Dt]
+        else:
+            t_k = torch.cat([seq, seq_t], dim=2) # [B, N, D + Dt]
+            for i in range(self.sa_layers):
+                t_k, attn = self.transformer_modules[i](q=t_k, k=t_k, v=t_k, time_diff=None, mask=mask, use_res=True)
+            k = torch.cat((t_k[:, :, :seq.shape[2]], seq_e, t_k[:, :, seq.shape[2]:]), dim=-1)
 
         # # target-attention
         # output, attn = self.multi_head_target(q=q, k=k, v=k, mask=mask) # output: [B, 1, D + Dt], attn: [B, 1, N]
@@ -268,9 +272,9 @@ class MixModel(torch.nn.Module):
     """Attention based temporal layers
     """
     def __init__(self, feat_dim, edge_dim, time_dim, 
-                 attn_mode='prod', n_head=2, drop_out=0.1):
+                 attn_mode='prod', n_head=2, drop_out=0.1, sa_layers=0):
         super(MixModel, self).__init__()
-        self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, attn_mode, n_head, drop_out)
+        self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, attn_mode, n_head, drop_out, sa_layers)
         self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim)
 
     def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask): # Try time diff
@@ -284,7 +288,7 @@ class MixModel(torch.nn.Module):
 
 class TGCN(torch.nn.Module):
     def __init__(self, ngh_finder, feat_dim, edge_dim, time_dim, n_node, n_edge, device='cpu', num_layers=3, use_td=False, num_workers=0,
-                 pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None):
+                 pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None, sa_layers=0):
         super(TGCN, self).__init__()
         self.workers_alive = False
 
@@ -327,7 +331,8 @@ class TGCN(torch.nn.Module):
                                                                   self.time_dim,
                                                                   attn_mode=attn_mode,
                                                                   n_head=n_head,
-                                                                  drop_out=drop_out) for _ in range(num_layers)])
+                                                                  drop_out=drop_out,
+                                                                  sa_layers=sa_layers) for _ in range(num_layers)])
         elif agg_method == 'lstm':
             logging.info('Aggregation uses LSTM model')
             self.attn_model_list = torch.nn.ModuleList([LSTMPool(self.feat_dim,
@@ -344,7 +349,8 @@ class TGCN(torch.nn.Module):
                                                                   self.time_dim,
                                                                   attn_mode=attn_mode,
                                                                   n_head=n_head,
-                                                                  drop_out=drop_out) for _ in range(num_layers)])
+                                                                  drop_out=drop_out,
+                                                                  sa_layers=sa_layers) for _ in range(num_layers)])
         else:
             raise ValueError('invalid agg_method value, use attn or lstm')
 

@@ -1,19 +1,20 @@
 import torch
+import torch.nn as nn
 
 
-class TimeEncode(torch.nn.Module):
+class TimeEncode(nn.Module):
     def __init__(self, expand_dim, factor=5):
         super(TimeEncode, self).__init__()
         #init_len = np.array([1e8**(i/(time_dim-1)) for i in range(time_dim)])
 
         time_dim = expand_dim
         self.factor = factor
-        self.basis_freq = torch.nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim))).float())
-        self.phase = torch.nn.Parameter(torch.zeros(time_dim).float())
+        self.basis_freq = nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim))).float())
+        self.phase = nn.Parameter(torch.zeros(time_dim).float())
 
-        #self.dense = torch.nn.Linear(time_dim, expand_dim, bias=False)
+        #self.dense = nn.Linear(time_dim, expand_dim, bias=False)
 
-        #torch.nn.init.xavier_normal_(self.dense.weight)
+        #nn.init.xavier_normal_(self.dense.weight)
 
     def forward(self, ts):
         # ts: [N, L]
@@ -29,7 +30,7 @@ class TimeEncode(torch.nn.Module):
         return harmonic #self.dense(harmonic)
 
 
-class PosEncode(torch.nn.Module):
+class PosEncode(nn.Module):
     def __init__(self, expand_dim, seq_len):
         super().__init__()
         self.pos_embeddings = nn.Embedding(num_embeddings=seq_len + 1, embedding_dim=expand_dim) # +1 for ts = 0
@@ -45,7 +46,7 @@ class PosEncode(torch.nn.Module):
         return ts_emb
 
 
-class EmptyEncode(torch.nn.Module):
+class EmptyEncode(nn.Module):
     def __init__(self, expand_dim):
         super().__init__()
         self.expand_dim = expand_dim
