@@ -11,6 +11,7 @@ from joblib import Parallel, delayed
 
 from global_flag import get_flag
 from order_encoder import TimeEncode, PosEncode, EmptyEncode
+from t_lstm import TimeLSTM
 
 
 class MergeLayer(torch.nn.Module):
@@ -138,19 +139,28 @@ class LSTMPool(torch.nn.Module):
 
         self.act = torch.nn.ReLU()
 
-        self.lstm = torch.nn.LSTM(input_size=self.att_dim,
-                                  hidden_size=self.feat_dim,
-                                  num_layers=1,
-                                  batch_first=True)
+        # self.lstm = torch.nn.LSTM(input_size=self.att_dim,
+        #                           hidden_size=self.feat_dim,
+        #                           num_layers=1,
+        #                           batch_first=True)
+        self.lstm = TimeLSTM(input_size=self.att_dim, hidden_size=self.feat_dim, batch_first=True)
         self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, _, mask): # Try time diff
+    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask): # Try time diff
         # seq [B, N, D]
         # mask [B, N]
         # seq_x = torch.cat([seq, seq_e, seq_t], dim=2)
         seq_x = torch.cat([seq, seq_e], dim=2)
 
-        _, (hn, _) = self.lstm(seq_x)
+        if time_diff is not None:
+            for i in range(1, time_diff.shape[1]):
+                new_diff = time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]
+                time_diff[:, time_diff.shape[1] - i] = new_diff
+            time_diff[:, 0] = torch.zeros_like(time_diff[:, 0])
+            assert torch.sum(time_diff >= 0) == time_diff.numel()
+            _, (hn, _) = self.lstm(seq_x, time_diff) # Try time diff, for TimeLSTM
+        else:
+            _, (hn, _) = self.lstm(seq_x) # for torch.nn.LSTM
 
         hn = hn[-1, :, :] #hn.squeeze(dim=0)
 

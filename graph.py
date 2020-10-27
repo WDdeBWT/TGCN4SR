@@ -35,6 +35,8 @@ class NeighborFinder:
             self.random_state = np.random.RandomState(self.seed)
 
     def find_before(self, src_idx, cut_time):
+        # if src_idx == 0:
+        #     return np.array([]), np.array([]), np.array([])
         """
         Extracts all the interactions happening before cut_time for user src_idx in the overall interaction graph. The returned interactions are sorted by time.
 
