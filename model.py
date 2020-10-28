@@ -41,24 +41,25 @@ class ScaledDotProductAttention(torch.nn.Module):
         self.dropout = torch.nn.Dropout(attn_dropout)
         self.softmax = torch.nn.Softmax(dim=2)
 
-        self.time_plus_weight = nn.Parameter(torch.zeros(1)) # Try time diff
-        self.time_mul_weight = nn.Parameter(torch.ones(1)) # Try time diff
+        self.time_plus_weight = nn.Parameter(torch.zeros(1))
+        self.time_mul_weight = nn.Parameter(torch.ones(1))
 
-    def forward(self, q, k, v, time_diff=None, mask=None): # Try time diff
+    def forward(self, q, k, v, time_diff=None, mask=None):
         attn = torch.bmm(q, k.transpose(1, 2))
         attn = attn / self.temperature
         if torch.sum(mask) != 0:
             attn = attn.masked_fill(mask, -1e10)
         attn = self.softmax(attn) # [n * b, l_q, l_k]
 
-        if time_diff is not None:
-            time_diff = time_diff / time_diff.mean() # Try time diff
-            time_diff = time_diff + nn.functional.softplus(self.time_plus_weight) * torch.max(time_diff) # Try time diff
-            time_diff_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try time diff
+        # if time_diff is not None:
+        if False:
+            time_diff = time_diff / time_diff.mean()
+            time_diff = time_diff + nn.functional.softplus(self.time_plus_weight) * torch.max(time_diff)
+            time_diff_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff)
             if torch.sum(mask) != 0:
-                time_diff_weight = time_diff_weight.masked_fill(mask, -1e10) # Try time diff
-            time_diff_weight = self.softmax(time_diff_weight) # Try time diff
-            attn = (attn + self.time_mul_weight * time_diff_weight) / (1 + self.time_mul_weight) # Try time diff
+                time_diff_weight = time_diff_weight.masked_fill(mask, -1e10)
+            time_diff_weight = self.softmax(time_diff_weight)
+            attn = (attn + self.time_mul_weight * time_diff_weight) / (1 + self.time_mul_weight)
 
         attn = self.dropout(attn) # [n * b, l_v, d]
         output = torch.bmm(attn, v)
@@ -92,7 +93,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
 
-    def forward(self, q, k, v, time_diff=None, mask=None, use_res=False): # Try time diff
+    def forward(self, q, k, v, time_diff=None, mask=None, use_res=False):
 
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
 
@@ -112,8 +113,8 @@ class MultiHeadAttention(nn.Module):
 
         mask = mask.repeat(n_head, 1, 1) # (n*b) x .. x ..
         if time_diff is not None:
-            time_diff = time_diff.view(time_diff.shape[0], 1, time_diff.shape[1]).repeat(n_head, 1, 1) # Try time diff
-        output, attn = self.attention(q, k, v, time_diff, mask=mask) # Try time diff
+            time_diff = time_diff.view(time_diff.shape[0], 1, time_diff.shape[1]).repeat(n_head, 1, 1)
+        output, attn = self.attention(q, k, v, time_diff, mask=mask)
 
         output = output.view(n_head, sz_b, len_q, d_v)
 
@@ -146,7 +147,7 @@ class LSTMPool(torch.nn.Module):
         self.lstm = TimeLSTM(input_size=self.att_dim, hidden_size=self.feat_dim, batch_first=True)
         self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask): # Try time diff
+    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
         # seq [B, N, D]
         # mask [B, N]
         # seq_x = torch.cat([seq, seq_e, seq_t], dim=2)
@@ -154,11 +155,23 @@ class LSTMPool(torch.nn.Module):
 
         if time_diff is not None:
             for i in range(1, time_diff.shape[1]):
-                new_diff = time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]
+                new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 5000000
+                # new_diff_nz = new_diff[new_diff != 0]
+                # new_diff_0 = new_diff_nz[new_diff_nz.int() == 0]
+                # new_diff_1 = new_diff[new_diff.int() == 1]
+                # new_diff_2 = new_diff[new_diff.int() == 2]
+                # new_diff_3 = new_diff[new_diff.int() == 3]
+                # new_diff_10 = new_diff[new_diff.int() >= 10]
+                # print(new_diff_nz.int().tolist())
+                # print(new_diff.numel(), new_diff_nz.numel(), new_diff_0.numel(), new_diff_1.numel(), new_diff_2.numel(), new_diff_3.numel(), new_diff_10.numel())
+                # print(new_diff_nz.min(), new_diff_nz.max(), new_diff_nz.mean())
+                # print('--------------------------------------------------')
+                # import time
+                # time.sleep(1)
                 time_diff[:, time_diff.shape[1] - i] = new_diff
             time_diff[:, 0] = torch.zeros_like(time_diff[:, 0])
             assert torch.sum(time_diff >= 0) == time_diff.numel()
-            _, (hn, _) = self.lstm(seq_x, time_diff) # Try time diff, for TimeLSTM
+            _, (hn, _) = self.lstm(seq_x, time_diff) # for TimeLSTM
         else:
             _, (hn, _) = self.lstm(seq_x) # for torch.nn.LSTM
 
@@ -176,7 +189,7 @@ class MeanPool(torch.nn.Module):
         self.act = torch.nn.ReLU()
         self.merger = MergeLayer(edge_dim + feat_dim, feat_dim, feat_dim, feat_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, _, mask): # Try time diff
+    def forward(self, src, src_t, seq, seq_t, seq_e, _, mask):
         # seq [B, N, D]
         # mask [B, N]
         src_x = src
@@ -235,7 +248,7 @@ class AttnModel(torch.nn.Module):
         else:
             raise ValueError('attn_mode can only be prod or map')
         
-    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask): # Try time diff
+    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
         """"Attention based temporal attention forward pass
         args:
           src: float Tensor of shape [B, D]
@@ -270,7 +283,7 @@ class AttnModel(torch.nn.Module):
 
         # # target-attention
         # output, attn = self.multi_head_target(q=q, k=k, v=k, mask=mask) # output: [B, 1, D + Dt], attn: [B, 1, N]
-        output, attn = self.multi_head_target(q=q, k=k, v=k, time_diff=time_diff, mask=mask) # Try time diff
+        output, attn = self.multi_head_target(q=q, k=k, v=k, time_diff=time_diff, mask=mask)
         output = output.squeeze()
         attn = attn.squeeze()
 
@@ -287,9 +300,9 @@ class MixModel(torch.nn.Module):
         self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, attn_mode, n_head, drop_out, sa_layers)
         self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask): # Try time diff
-        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask) # Try time diff
-        lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, time_diff, mask) # Try time diff
+    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
+        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
+        lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
 
         output = (attn_result + lstm_result) / 2 # TODO: better merge
         # output = torch.max(torch.stack((attn_result, lstm_result), dim=1), dim=1)[0] # use better merge
@@ -508,7 +521,7 @@ class TGCN(torch.nn.Module):
                                    src_ngh_feat,
                                    src_ngh_t_embed,
                                    src_ngn_edge_feat,
-                                   time_diff, # Try time diff
+                                   time_diff,
                                    mask)
             return local
 
