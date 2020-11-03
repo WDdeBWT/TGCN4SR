@@ -9,20 +9,21 @@ data_path = 'data/'
 
 class TrainDataset(torch.utils.data.Dataset):
 
-    def __init__(self, adj_list, n_user, n_item):
+    def __init__(self, adj_list, n_user, n_item, min_train_seq):
         self.instance_user = []
         self.instance_item = []
         self.instance_time = []
         self.user_map_only_item = defaultdict(list)
         for u in adj_list:
-            if u >= n_user:
+            if u >= n_user or len(adj_list[u]) < min_train_seq:
                 continue
             sorted_tuple = sorted(adj_list[u], key=lambda x: x[2])
             # for x in sorted_tuple[2:]: # TODO: Try not use [2:]
             #     self.instance_user.append(u)
             #     self.instance_item.append(x[0])
             #     self.instance_time.append(x[2])
-            for i in range(2, len(sorted_tuple)):
+            # for i in range(2, len(sorted_tuple)):
+            for i in range(min_train_seq - 1, len(sorted_tuple)):
                 self.instance_user.append(u)
                 self.instance_item.append(sorted_tuple[i][0])
                 self.instance_time.append(sorted_tuple[i - 1][2] + 1)
@@ -217,25 +218,13 @@ def data_partition_amz(dataset_name='newAmazon'):
 
 
 if __name__ == "__main__":
-    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz()
-    # import matplotlib.pyplot as plt
-    # degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])
+    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('goodreads_large')
+    print(n_user, n_item)
+    import matplotlib.pyplot as plt
+    degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])
+    print(degree_list.mean(), degree_list.var())
     # plt.hist(x = degree_list, range=(0, 199), bins=100, color='steelblue', edgecolor='black')
-    # # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
-    # # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
-    # plt.show()
-
-    total = 0
-    hit = 0
-    for u in adj_list_tavat:
-        if u >= n_user or u == 13:
-            continue
-        sorted_tuple = sorted(adj_list_tavat[u], key=lambda x: x[2])
-        last_ts = 0
-        for line in sorted_tuple:
-            if line[2] == last_ts + 1:
-                hit += 1
-            total += 1
-            last_ts = line[2]
-    print(total)
-    print(hit)
+    plt.hist(x = degree_list, range=(0, 50), bins=50, color='steelblue', edgecolor='black')
+    # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
+    # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
+    plt.show()

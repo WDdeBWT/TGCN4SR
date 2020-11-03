@@ -16,13 +16,13 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1027-0000'
+CODE_VERSION = '1103-1013'
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
 EPOCH = 20
 LR = 0.001
-BATCH_SIZE = 1024
+BATCH_SIZE = 1024 + 512
 NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 if cpu_count() <= 2:
@@ -31,9 +31,9 @@ if cpu_count() <= 2:
     NUM_WORKERS_SN = 2
 
 LAM = 1e-4
-FEATURE_DIM = 64
+FEATURE_DIM = 64 + 32
 EDGE_DIM = 8
-TIME_DIM = 32
+TIME_DIM = 0
 LAYERS = 2
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty
@@ -44,6 +44,10 @@ DROP_OUT = 0.1
 USE_TD = True # use time_diff
 SA_LAYERS = 0 # self_attn layers
 UNIFORM = False
+if DATASET == 'newAmazon':
+    MIN_TRAIN_SEQ = 5
+elif DATASET == 'goodreads_large':
+    MIN_TRAIN_SEQ = 8
 
 # GPU / CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -154,8 +158,8 @@ if __name__ == "__main__":
     print('CODE_VERSION: ' + CODE_VERSION)
     adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz(DATASET)
 
-    # train_dataset = TrainDataset(adj_list_train, n_user, n_item)
-    tandv_dataset = TrainDataset(adj_list_tandv, n_user, n_item)
+    # train_dataset = TrainDataset(adj_list_train, n_user, n_item, MIN_TRAIN_SEQ)
+    tandv_dataset = TrainDataset(adj_list_tandv, n_user, n_item, MIN_TRAIN_SEQ)
     valid_dataset = ValidDataset(adj_list_tavat, n_user, n_item)
     test_dataset = TestDataset(adj_list_tavat, test_candidate, n_user, n_item)
 
@@ -176,7 +180,7 @@ if __name__ == "__main__":
 
     tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, EDGE_DIM, TIME_DIM, n_user+n_item, 2, device, LAYERS, USE_TD, NUM_WORKERS_SN,
                       pos_encoder=POS_ENCODER, agg_method=AGG_METHOD, attn_mode=ATTN_MODE,
-                      n_head=N_HEAD, drop_out=DROP_OUT, seq_len=seq_len, sa_layers=SA_LAYERS).to(device)
+                      n_head=N_HEAD, drop_out=DROP_OUT, seq_len=seq_len, sa_layers=SA_LAYERS, data_set=DATASET).to(device)
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
 
     for epoch_i in range(EPOCH):

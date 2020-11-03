@@ -24,10 +24,11 @@ class TimeLSTM(nn.Module):
             td_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try time diff
         for s in range(seq):
             if time_diff is not None:
-                c_s1 = torch.tanh(self.W_d(c))
-                c_s2 = c_s1 * td_weight[:, s:s + 1].expand_as(c_s1)
-                c_l = c - c_s1
-                c_adj = c_l + c_s2
+                # c_s1 = torch.tanh(self.W_d(c))
+                # c_s2 = c_s1 * td_weight[:, s:s + 1].expand_as(c_s1)
+                # c_l = c - c_s1
+                # c_adj = c_l + c_s2
+                c_adj = c * td_weight[:, s:s + 1].expand_as(c)
             else:
                 c_adj = c
             outs = self.W_all(h) + self.U_all(inputs[:, s])
@@ -41,3 +42,44 @@ class TimeLSTM(nn.Module):
             outputs.append(h)
         outputs = torch.stack(outputs, 1)
         return outputs, (h.unsqueeze(0), c.unsqueeze(0))
+
+
+# class TimeLSTM(nn.Module):
+#     def __init__(self, input_size, hidden_size, batch_first=True):
+#         super(TimeLSTM, self).__init__()
+#         self.hidden_size = hidden_size
+#         self.input_size = input_size
+#         # self.lstm_cell = nn.LSTMCell(input_size, hidden_size)
+#         self.gru_cell = nn.GRUCell(input_size, hidden_size)
+#         assert batch_first == True
+
+#     def forward(self, inputs, time_diff=None):
+#         # inputs: [b, seq, embed]
+#         # h: [b, hid]
+#         # c: [b, hid]
+#         b, seq, embed = inputs.size()
+#         h = torch.zeros(b, self.hidden_size, requires_grad=False).to(inputs.device)
+#         c = torch.zeros(b, self.hidden_size, requires_grad=False).to(inputs.device)
+#         outputs = []
+#         if time_diff is not None:
+#             td_weight = 1 / torch.log(torch.exp(torch.ones(1).to(time_diff)) + time_diff) # Try time diff
+#         for s in range(seq):
+#             if time_diff is not None:
+#                 # c_s1 = torch.tanh(self.W_d(c))
+#                 # c_s2 = c_s1 * td_weight[:, s:s + 1].expand_as(c_s1)
+#                 # c_l = c - c_s1
+#                 # c_adj = c_l + c_s2
+#                 c_adj = c * td_weight[:, s:s + 1].expand_as(c)
+#             else:
+#                 c_adj = c
+
+#             # lstm version
+#             # h, c = self.lstm_cell(inputs[:, s], (h, c_adj))
+
+#             # gru version
+#             c = self.gru_cell(inputs[:, s], c_adj)
+#             h = c
+
+#             outputs.append(h)
+#         outputs = torch.stack(outputs, 1)
+#         return outputs, (h.unsqueeze(0), c.unsqueeze(0))

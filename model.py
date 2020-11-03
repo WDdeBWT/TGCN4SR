@@ -129,7 +129,7 @@ class MultiHeadAttention(nn.Module):
 
 
 class LSTMPool(torch.nn.Module):
-    def __init__(self, feat_dim, edge_dim, time_dim):
+    def __init__(self, feat_dim, edge_dim, time_dim, data_set='newAmazon'):
         super(LSTMPool, self).__init__()
         self.feat_dim = feat_dim
         self.time_dim = time_dim
@@ -146,6 +146,7 @@ class LSTMPool(torch.nn.Module):
         #                           batch_first=True)
         self.lstm = TimeLSTM(input_size=self.att_dim, hidden_size=self.feat_dim, batch_first=True)
         self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
+        self.data_set = data_set
 
     def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
         # seq [B, N, D]
@@ -155,7 +156,12 @@ class LSTMPool(torch.nn.Module):
 
         if time_diff is not None:
             for i in range(1, time_diff.shape[1]):
-                new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 5000000
+                if self.data_set == 'newAmazon':
+                    new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 5000000 # for newAmazon
+                elif self.data_set == 'goodreads_large':
+                    new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 1000000 # for goodreads_large
+                else:
+                    assert False, 'False data_set'
                 # new_diff_nz = new_diff[new_diff != 0]
                 # new_diff_0 = new_diff_nz[new_diff_nz.int() == 0]
                 # new_diff_1 = new_diff[new_diff.int() == 1]
@@ -276,9 +282,12 @@ class AttnModel(torch.nn.Module):
         if self.sa_layers == 0:
             k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, N, D + De + Dt]
         else:
+            t_k_list = []
             t_k = torch.cat([seq, seq_t], dim=2) # [B, N, D + Dt]
             for i in range(self.sa_layers):
-                t_k, attn = self.transformer_modules[i](q=t_k, k=t_k, v=t_k, time_diff=None, mask=mask, use_res=True)
+                t_k, _ = self.transformer_modules[i](q=t_k, k=t_k, v=t_k, time_diff=None, mask=mask, use_res=True)
+                t_k_list.append(t_k)
+            t_k = torch.stack(t_k_list, dim=0).mean(dim=0)
             k = torch.cat((t_k[:, :, :seq.shape[2]], seq_e, t_k[:, :, seq.shape[2]:]), dim=-1)
 
         # # target-attention
@@ -295,23 +304,30 @@ class MixModel(torch.nn.Module):
     """Attention based temporal layers
     """
     def __init__(self, feat_dim, edge_dim, time_dim, 
-                 attn_mode='prod', n_head=2, drop_out=0.1, sa_layers=0):
+                 attn_mode='prod', n_head=2, drop_out=0.1, sa_layers=0, data_set='newAmazon'):
         super(MixModel, self).__init__()
         self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, attn_mode, n_head, drop_out, sa_layers)
-        self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim)
+        self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim, data_set=data_set)
+
+        self.weight_attn = nn.Parameter(torch.zeros(1) + 0.5)
 
     def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
         attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
         lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
 
-        output = (attn_result + lstm_result) / 2 # TODO: better merge
-        # output = torch.max(torch.stack((attn_result, lstm_result), dim=1), dim=1)[0] # use better merge
+        output = (attn_result + lstm_result) / 2 # Mean
+        # output = self.weight_attn * attn_result + (1 - self.weight_attn) * lstm_result # Weighted sum
+        # output = torch.max(torch.stack((attn_result, lstm_result), dim=1), dim=1)[0] # Max pool
+
+        # if get_flag():
+        #     print('Mix weight: ', self.weight_attn.data.item())
+
         return output, None
 
 
 class TGCN(torch.nn.Module):
     def __init__(self, ngh_finder, feat_dim, edge_dim, time_dim, n_node, n_edge, device='cpu', num_layers=3, use_td=False, num_workers=0,
-                 pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None, sa_layers=0):
+                 pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None, sa_layers=0, data_set='newAmazon'):
         super(TGCN, self).__init__()
         self.workers_alive = False
 
@@ -333,18 +349,21 @@ class TGCN(torch.nn.Module):
         self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.edge_dim)
 
         # Choose position encoder
-        if pos_encoder == 'time':
-            logging.info('Using time encoding')
-            self.time_encoder = TimeEncode(expand_dim=self.time_dim)
-        elif pos_encoder == 'pos':
-            assert(seq_len is not None)
-            logging.info('Using positional encoding')
-            self.time_encoder = PosEncode(expand_dim=self.time_dim, seq_len=seq_len)
-        elif pos_encoder == 'empty':
-            logging.info('Using empty encoding')
-            self.time_encoder = EmptyEncode(expand_dim=self.time_dim)
+        if self.time_dim != 0:
+            if pos_encoder == 'time':
+                logging.info('Using time encoding')
+                self.time_encoder = TimeEncode(expand_dim=self.time_dim)
+            elif pos_encoder == 'pos':
+                assert(seq_len is not None)
+                logging.info('Using positional encoding')
+                self.time_encoder = PosEncode(expand_dim=self.time_dim, seq_len=seq_len)
+            elif pos_encoder == 'empty':
+                logging.info('Using empty encoding')
+                self.time_encoder = EmptyEncode(expand_dim=self.time_dim)
+            else:
+                raise ValueError('invalid pos_encoder option!')
         else:
-            raise ValueError('invalid pos_encoder option!')
+            self.time_encoder = EmptyEncode(expand_dim=self.time_dim)
 
         # Choose aggregate method
         if agg_method == 'attn':
@@ -360,7 +379,8 @@ class TGCN(torch.nn.Module):
             logging.info('Aggregation uses LSTM model')
             self.attn_model_list = torch.nn.ModuleList([LSTMPool(self.feat_dim,
                                                                  self.edge_dim,
-                                                                 self.time_dim) for _ in range(num_layers)])
+                                                                 self.time_dim,
+                                                                 data_set=data_set) for _ in range(num_layers)])
         elif agg_method == 'mean':
             logging.info('Aggregation uses constant mean model')
             self.attn_model_list = torch.nn.ModuleList([MeanPool(self.feat_dim,
@@ -373,7 +393,8 @@ class TGCN(torch.nn.Module):
                                                                   attn_mode=attn_mode,
                                                                   n_head=n_head,
                                                                   drop_out=drop_out,
-                                                                  sa_layers=sa_layers) for _ in range(num_layers)])
+                                                                  sa_layers=sa_layers,
+                                                                  data_set=data_set) for _ in range(num_layers)])
         else:
             raise ValueError('invalid agg_method value, use attn or lstm')
 
