@@ -4,6 +4,7 @@ test.py
 *.pth
 .vscode/
 exclude.txt
+.stignore
 
 data/
 

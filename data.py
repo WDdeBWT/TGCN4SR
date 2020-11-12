@@ -15,8 +15,9 @@ class TrainDataset(torch.utils.data.Dataset):
         self.instance_time = []
         self.user_map_only_item = defaultdict(list)
         for u in adj_list:
-            if u >= n_user or len(adj_list[u]) < min_train_seq:
+            if u >= n_user:
                 continue
+            assert len(adj_list[u]) > min_train_seq
             sorted_tuple = sorted(adj_list[u], key=lambda x: x[2])
             # for x in sorted_tuple[2:]: # TODO: Try not use [2:]
             #     self.instance_user.append(u)

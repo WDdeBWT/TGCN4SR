@@ -21,12 +21,6 @@ class NeighborFinder:
                 np.array([x[1] for x in sorted_neighhbors]))
             self.node_to_edge_timestamps.append(
                 np.array([x[2] for x in sorted_neighhbors]))
-        #     print([x[2] for x in sorted_neighhbors])
-        #     if sorted_neighhbors:
-        #         if sorted_neighhbors[0][2] == 0:
-        #             print(sorted_neighhbors)
-        #             exit(0)
-        # exit(0)
 
         self.uniform = uniform
 

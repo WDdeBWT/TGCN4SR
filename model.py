@@ -155,13 +155,15 @@ class LSTMPool(torch.nn.Module):
         seq_x = torch.cat([seq, seq_e], dim=2)
 
         if time_diff is not None:
+            time_span = time_diff.clone()
             for i in range(1, time_diff.shape[1]):
                 if self.data_set == 'newAmazon':
                     new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 5000000 # for newAmazon
                 elif self.data_set == 'goodreads_large':
                     new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 1000000 # for goodreads_large
                 else:
-                    assert False, 'False data_set'
+                    new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 1000000 # for goodreads_large
+                    # assert False, 'False data_set'
                 # new_diff_nz = new_diff[new_diff != 0]
                 # new_diff_0 = new_diff_nz[new_diff_nz.int() == 0]
                 # new_diff_1 = new_diff[new_diff.int() == 1]
@@ -170,14 +172,14 @@ class LSTMPool(torch.nn.Module):
                 # new_diff_10 = new_diff[new_diff.int() >= 10]
                 # print(new_diff_nz.int().tolist())
                 # print(new_diff.numel(), new_diff_nz.numel(), new_diff_0.numel(), new_diff_1.numel(), new_diff_2.numel(), new_diff_3.numel(), new_diff_10.numel())
-                # print(new_diff_nz.min(), new_diff_nz.max(), new_diff_nz.mean())
+                # print(new_diff_nz.min(), new_diff_nz.max(), new_diff_nz.mean(), new_diff_nz.shape)
                 # print('--------------------------------------------------')
                 # import time
                 # time.sleep(1)
-                time_diff[:, time_diff.shape[1] - i] = new_diff
-            time_diff[:, 0] = torch.zeros_like(time_diff[:, 0])
-            assert torch.sum(time_diff >= 0) == time_diff.numel()
-            _, (hn, _) = self.lstm(seq_x, time_diff) # for TimeLSTM
+                time_span[:, time_diff.shape[1] - i] = new_diff
+            time_span[:, 0] = torch.zeros_like(time_diff[:, 0])
+            assert torch.sum(time_span >= 0) == time_span.numel()
+            _, (hn, _) = self.lstm(seq_x, time_span, mask) # for TimeLSTM
         else:
             _, (hn, _) = self.lstm(seq_x) # for torch.nn.LSTM
 
@@ -209,13 +211,12 @@ class AttnModel(torch.nn.Module):
     """Attention based temporal layers
     """
     def __init__(self, feat_dim, edge_dim, time_dim, 
-                 attn_mode='prod', n_head=2, drop_out=0.1, sa_layers=0):
+                 n_head=2, drop_out=0.1, sa_layers=0):
         """
         args:
           feat_dim: dim for the node features
           edge_dim: dim for the temporal edge features
           time_dim: dim for the time encoding
-          attn_mode: choose from 'prod' and 'map'
           n_head: number of heads in attention
           drop_out: probability of dropping a neural.
         """
@@ -235,7 +236,6 @@ class AttnModel(torch.nn.Module):
         #self.act = torch.nn.ReLU()
 
         assert(self.model_dim % n_head == 0)
-        self.attn_mode = attn_mode
 
         self.sa_layers = sa_layers # use self-attention
         if sa_layers != 0:
@@ -244,16 +244,12 @@ class AttnModel(torch.nn.Module):
                                 self.transformer_dim // n_head, dropout=drop_out)
                 for _ in range(sa_layers)])
 
-        if attn_mode == 'prod':
-            self.multi_head_target = MultiHeadAttention(n_head,
-                                             d_model=self.model_dim,
-                                             d_k=self.model_dim // n_head,
-                                             d_v=self.model_dim // n_head,
-                                             dropout=drop_out)
-            logging.info('Using scaled prod attention')
-        else:
-            raise ValueError('attn_mode can only be prod or map')
-        
+        self.multi_head_target = MultiHeadAttention(n_head,
+                                            d_model=self.model_dim,
+                                            d_k=self.model_dim // n_head,
+                                            d_v=self.model_dim // n_head,
+                                            dropout=drop_out)
+
     def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
         """"Attention based temporal attention forward pass
         args:
@@ -304,12 +300,13 @@ class MixModel(torch.nn.Module):
     """Attention based temporal layers
     """
     def __init__(self, feat_dim, edge_dim, time_dim, 
-                 attn_mode='prod', n_head=2, drop_out=0.1, sa_layers=0, data_set='newAmazon'):
+                 n_head=2, drop_out=0.1, sa_layers=0, data_set='newAmazon'):
         super(MixModel, self).__init__()
-        self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, attn_mode, n_head, drop_out, sa_layers)
+        self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, n_head, drop_out, sa_layers)
         self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim, data_set=data_set)
 
-        self.weight_attn = nn.Parameter(torch.zeros(1) + 0.5)
+        # self.weight_attn = nn.Parameter(torch.zeros(1) + 0.5)
+        # self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
 
     def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
         attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
@@ -318,6 +315,7 @@ class MixModel(torch.nn.Module):
         output = (attn_result + lstm_result) / 2 # Mean
         # output = self.weight_attn * attn_result + (1 - self.weight_attn) * lstm_result # Weighted sum
         # output = torch.max(torch.stack((attn_result, lstm_result), dim=1), dim=1)[0] # Max pool
+        # output = self.merger(attn_result, lstm_result) # Concat & fc
 
         # if get_flag():
         #     print('Mix weight: ', self.weight_attn.data.item())
@@ -325,9 +323,33 @@ class MixModel(torch.nn.Module):
         return output, None
 
 
+class PruneModel(torch.nn.Module):
+    """Attention based temporal layers
+    """
+    def __init__(self, feat_dim):
+        super(PruneModel, self).__init__()
+        self.model_dim = feat_dim
+        self.attn_module = MultiHeadAttention(1, self.model_dim, self.model_dim, self.model_dim)
+        self.src = None
+
+    def set_src(self, src, n_ngh):
+        self.src = src.unsqueeze(1).repeat(1, n_ngh, 1).flatten(0, 1)
+
+    def forward(self, seq, mask):
+        assert self.src is not None
+        mask_temp = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
+        mask_temp = mask_temp.permute([0, 2, 1]) #mask [B, 1, N]
+        src_ext = torch.unsqueeze(self.src, dim=1)
+        _, attn = self.attn_module(q=src_ext, k=seq, v=seq, time_diff=None, mask=mask_temp, use_res=False)
+        # print(attn.shape, mask.shape, mask_temp.shape) # torch.Size([30720, 1, 40]) torch.Size([30720, 40]) torch.Size([30720, 1, 40])
+        attn = attn.squeeze()
+        mask[attn < (attn.mean(dim=1).unsqueeze(dim=1) / 5)] = 1
+        return mask
+
+
 class TGCN(torch.nn.Module):
-    def __init__(self, ngh_finder, feat_dim, edge_dim, time_dim, n_node, n_edge, device='cpu', num_layers=3, use_td=False, num_workers=0,
-                 pos_encoder='time', agg_method='attn', attn_mode='prod', n_head=4, drop_out=0.1, seq_len=None, sa_layers=0, data_set='newAmazon'):
+    def __init__(self, ngh_finder, feat_dim, edge_dim, time_dim, n_node, n_edge, device='cpu', num_layers=3, use_td=False, target_mode='prod', maigin=10, prune=False,
+                 num_workers=0, pos_encoder='time', agg_method='attn', n_head=4, drop_out=0.1, seq_len=None, sa_layers=0, data_set='newAmazon'):
         super(TGCN, self).__init__()
         self.workers_alive = False
 
@@ -338,6 +360,9 @@ class TGCN(torch.nn.Module):
         self.device = device
         self.num_layers = num_layers
         self.use_td = use_td
+        self.target_mode = target_mode
+        self.maigin = maigin
+        self.prune = prune
 
         if num_workers is None:
             self.num_workers = None
@@ -371,7 +396,6 @@ class TGCN(torch.nn.Module):
             self.attn_model_list = torch.nn.ModuleList([AttnModel(self.feat_dim,
                                                                   self.edge_dim,
                                                                   self.time_dim,
-                                                                  attn_mode=attn_mode,
                                                                   n_head=n_head,
                                                                   drop_out=drop_out,
                                                                   sa_layers=sa_layers) for _ in range(num_layers)])
@@ -390,7 +414,6 @@ class TGCN(torch.nn.Module):
             self.attn_model_list = torch.nn.ModuleList([MixModel(self.feat_dim,
                                                                   self.edge_dim,
                                                                   self.time_dim,
-                                                                  attn_mode=attn_mode,
                                                                   n_head=n_head,
                                                                   drop_out=drop_out,
                                                                   sa_layers=sa_layers,
@@ -399,6 +422,7 @@ class TGCN(torch.nn.Module):
             raise ValueError('invalid agg_method value, use attn or lstm')
 
         # self.affinity_score = MergeLayer(self.feat_dim, self.feat_dim, self.feat_dim, 1)
+        self.prune_model = PruneModel(self.feat_dim)
 
     def init_workers(self):
         if self.num_workers is not None:
@@ -449,11 +473,17 @@ class TGCN(torch.nn.Module):
         src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors)
         tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors)
         neg_embed = self.tem_conv(neg_nodes, cut_times, self.num_layers, 0, num_neighbors)
-        pos_scores = torch.sum(src_embed * tgt_embed, dim=1)
-        neg_scores = torch.sum(src_embed * neg_embed, dim=1)
-        loss = torch.mean(nn.functional.softplus(neg_scores - pos_scores))
-        # loss = torch.mean(torch.log(1 + torch.exp(neg_scores - pos_scores))) # same as softplus
-        # reg_loss = (1/2) * reg_loss / float(len(users))
+        if self.target_mode == 'prod':
+            pos_scores = torch.sum(src_embed * tgt_embed, dim=1)
+            neg_scores = torch.sum(src_embed * neg_embed, dim=1)
+            loss = torch.mean(nn.functional.softplus(neg_scores - pos_scores))
+            # loss = torch.mean(torch.log(1 + torch.exp(neg_scores - pos_scores))) # same as softplus
+        elif self.target_mode == 'dist':
+            pos_dist = F.pairwise_distance(src_embed, tgt_embed, 2)
+            neg_dist = F.pairwise_distance(src_embed, neg_embed, 2)
+            loss = torch.sum(F.relu(pos_dist - neg_dist + self.maigin))
+        else:
+            assert False, 'False target_mode'
         return loss
 
     def get_top_n(self, src_nodes, candidate_nodes, cut_times, num_neighbors=20, topk=20):
@@ -462,7 +492,13 @@ class TGCN(torch.nn.Module):
         for cad, cut, src in zip(candidate_nodes, cut_times, src_embed):
             cut = np.tile(cut, (cad.shape[0]))
             candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors)
-            ratings = torch.matmul(candidate_embed, src) # shape=(101,)
+            if self.target_mode == 'prod':
+                ratings = torch.matmul(candidate_embed, src) # shape=(101,)
+            elif self.target_mode == 'dist':
+                distance = F.pairwise_distance(candidate_embed, src, 2)
+                ratings = -distance
+            else:
+                assert False, 'False target_mode'
             batch_ratings.append(ratings)
         batch_ratings = torch.stack(batch_ratings) # shape=(batch_size, candidate_size)
         if topk <= 0:
@@ -487,6 +523,8 @@ class TGCN(torch.nn.Module):
         src_node_feat = self.node_embed(src_node_batch_th)
 
         if curr_layers == 0:
+            if curr_distance == 0:
+                self.prune_model.set_src(src_node_feat, num_neighbors)
             return src_node_feat
         else:
             src_node_conv_feat = self.tem_conv(src_nodes,
@@ -511,25 +549,30 @@ class TGCN(torch.nn.Module):
 
             # get previous layer's node features
             src_ngh_node_batch_flat = src_ngh_node_batch.flatten() #reshape(batch_size, -1)
-            src_ngh_t_batch_flat = src_ngh_t_batch.flatten() #reshape(batch_size, -1)  
+            # print(src_ngh_node_batch.shape, src_ngh_node_batch_flat.shape)
+            # exit(0)
+
+            src_ngh_t_batch_flat = src_ngh_t_batch.flatten() #reshape(batch_size, -1)
+            # src_ngh_t_batch_flat = (cut_times[:, np.newaxis] - np.zeros_like(src_ngh_t_batch)).flatten()
+            # src_ngh_t_batch_flat = (cut_times[:, np.newaxis] - (src_ngh_t_batch_delta / 2)).flatten()
+
             src_ngh_node_conv_feat = self.tem_conv(src_ngh_node_batch_flat,
                                                    src_ngh_t_batch_flat,
                                                    curr_layers=curr_layers - 1,
                                                    curr_distance=curr_distance + 1,
                                                    num_neighbors=num_neighbors)
             src_ngh_feat = src_ngh_node_conv_feat.view(batch_size, num_neighbors, -1)
-            if self.num_layers >= 3 and curr_distance + 1 == self.num_layers:
-                src_ngh_feat = src_ngh_feat[:, 10:, :]
-                src_ngh_node_batch_th = src_ngh_node_batch_th[:, 10:]
-                src_ngh_t_batch_th = src_ngh_t_batch_th[:, 10:]
-                src_ngh_eidx_batch = src_ngh_eidx_batch[:, 10:]
+            mask = src_ngh_node_batch_th == 0
+
+            # if num_neighbors >= 30 and curr_distance + 1 == self.num_layers:
+            if self.prune and curr_distance + 1 == self.num_layers:
+                mask = self.prune_model(src_ngh_feat, mask)
 
             # get edge time features and node features
             src_ngh_t_embed = self.time_encoder(src_ngh_t_batch_th)
             src_ngn_edge_feat = self.edge_embed(src_ngh_eidx_batch)
 
             # attention aggregation
-            mask = src_ngh_node_batch_th == 0
             attn_m = self.attn_model_list[curr_layers - 1]
 
             if self.use_td:
