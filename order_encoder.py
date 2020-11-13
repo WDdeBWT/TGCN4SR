@@ -35,6 +35,7 @@ class PosEncode(nn.Module):
     def __init__(self, expand_dim, seq_len):
         super().__init__()
         self.pos_embeddings = nn.Embedding(num_embeddings=seq_len + 1, embedding_dim=expand_dim) # +1 for ts = 0
+        nn.init.xavier_uniform_(self.pos_embeddings.weight, gain=1)
         self.seq_len = seq_len
 
     def forward(self, ts):

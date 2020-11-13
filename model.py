@@ -336,7 +336,6 @@ class PruneModel(torch.nn.Module):
         self.src = src.unsqueeze(1).repeat(1, n_ngh, 1).flatten(0, 1)
 
     def forward(self, seq, mask):
-        assert self.src is not None
         mask_temp = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
         mask_temp = mask_temp.permute([0, 2, 1]) #mask [B, 1, N]
         src_ext = torch.unsqueeze(self.src, dim=1)
@@ -370,8 +369,9 @@ class TGCN(torch.nn.Module):
             self.num_workers = num_workers if num_workers != 0 else cpu_count() // 2
 
         self.node_embed = torch.nn.Embedding(num_embeddings=n_node, embedding_dim=self.feat_dim)
-        # self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.feat_dim)
         self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.edge_dim)
+        nn.init.xavier_uniform_(self.node_embed.weight, gain=1)
+        nn.init.xavier_uniform_(self.edge_embed.weight, gain=1)
 
         # Choose position encoder
         if self.time_dim != 0:
