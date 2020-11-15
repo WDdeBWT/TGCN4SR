@@ -44,9 +44,9 @@ import torch.nn as nn
 #         return outputs, (h.unsqueeze(0), c.unsqueeze(0))
 
 
-class TimeLSTM(nn.Module):
+class TimeGRU(nn.Module):
     def __init__(self, input_size, hidden_size, batch_first=True):
-        super(TimeLSTM, self).__init__()
+        super(TimeGRU, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
         self.gru_cell = nn.GRUCell(input_size, hidden_size)

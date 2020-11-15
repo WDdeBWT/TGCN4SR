@@ -11,7 +11,7 @@ from joblib import Parallel, delayed
 
 from global_flag import get_flag
 from order_encoder import TimeEncode, PosEncode, EmptyEncode
-from t_lstm import TimeLSTM
+from t_lstm import TimeGRU
 
 
 class MergeLayer(torch.nn.Module):
@@ -138,13 +138,7 @@ class LSTMPool(torch.nn.Module):
         # self.att_dim = feat_dim + edge_dim + time_dim
         self.att_dim = feat_dim + edge_dim
 
-        self.act = torch.nn.ReLU()
-
-        # self.lstm = torch.nn.LSTM(input_size=self.att_dim,
-        #                           hidden_size=self.feat_dim,
-        #                           num_layers=1,
-        #                           batch_first=True)
-        self.lstm = TimeLSTM(input_size=self.att_dim, hidden_size=self.feat_dim, batch_first=True)
+        self.lstm = TimeGRU(input_size=self.att_dim, hidden_size=self.feat_dim, batch_first=True)
         self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
         self.data_set = data_set
 
@@ -179,9 +173,9 @@ class LSTMPool(torch.nn.Module):
                 time_span[:, time_diff.shape[1] - i] = new_diff
             time_span[:, 0] = torch.zeros_like(time_diff[:, 0])
             assert torch.sum(time_span >= 0) == time_span.numel()
-            _, (hn, _) = self.lstm(seq_x, time_span, mask) # for TimeLSTM
+            _, (hn, _) = self.lstm(seq_x, time_span, mask)
         else:
-            _, (hn, _) = self.lstm(seq_x) # for torch.nn.LSTM
+            _, (hn, _) = self.lstm(seq_x)
 
         hn = hn[-1, :, :] #hn.squeeze(dim=0)
 
@@ -288,7 +282,7 @@ class AttnModel(torch.nn.Module):
 
         # # target-attention
         # output, attn = self.multi_head_target(q=q, k=k, v=k, mask=mask) # output: [B, 1, D + Dt], attn: [B, 1, N]
-        output, attn = self.multi_head_target(q=q, k=k, v=k, time_diff=time_diff, mask=mask)
+        output, attn = self.multi_head_target(q=q, k=k, v=k, time_diff=time_diff, mask=mask, use_res=False)
         output = output.squeeze()
         attn = attn.squeeze()
 
@@ -305,7 +299,7 @@ class MixModel(torch.nn.Module):
         self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, n_head, drop_out, sa_layers)
         self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim, data_set=data_set)
 
-        # self.weight_attn = nn.Parameter(torch.zeros(1) + 0.5)
+        self.weight_attn = nn.Parameter(torch.zeros(feat_dim))
         # self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
 
     def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
@@ -313,12 +307,10 @@ class MixModel(torch.nn.Module):
         lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
 
         output = (attn_result + lstm_result) / 2 # Mean
-        # output = self.weight_attn * attn_result + (1 - self.weight_attn) * lstm_result # Weighted sum
+        # output = (0.5 + self.weight_attn) * attn_result + (0.5 - self.weight_attn) * lstm_result # Weighted sum
         # output = torch.max(torch.stack((attn_result, lstm_result), dim=1), dim=1)[0] # Max pool
         # output = self.merger(attn_result, lstm_result) # Concat & fc
-
-        # if get_flag():
-        #     print('Mix weight: ', self.weight_attn.data.item())
+        # TODO: Try attention
 
         return output, None
 
@@ -340,7 +332,6 @@ class PruneModel(torch.nn.Module):
         mask_temp = mask_temp.permute([0, 2, 1]) #mask [B, 1, N]
         src_ext = torch.unsqueeze(self.src, dim=1)
         _, attn = self.attn_module(q=src_ext, k=seq, v=seq, time_diff=None, mask=mask_temp, use_res=False)
-        # print(attn.shape, mask.shape, mask_temp.shape) # torch.Size([30720, 1, 40]) torch.Size([30720, 40]) torch.Size([30720, 1, 40])
         attn = attn.squeeze()
         mask[attn < (attn.mean(dim=1).unsqueeze(dim=1) / 5)] = 1
         return mask
@@ -421,7 +412,6 @@ class TGCN(torch.nn.Module):
         else:
             raise ValueError('invalid agg_method value, use attn or lstm')
 
-        # self.affinity_score = MergeLayer(self.feat_dim, self.feat_dim, self.feat_dim, 1)
         self.prune_model = PruneModel(self.feat_dim)
 
     def init_workers(self):
@@ -549,8 +539,6 @@ class TGCN(torch.nn.Module):
 
             # get previous layer's node features
             src_ngh_node_batch_flat = src_ngh_node_batch.flatten() #reshape(batch_size, -1)
-            # print(src_ngh_node_batch.shape, src_ngh_node_batch_flat.shape)
-            # exit(0)
 
             src_ngh_t_batch_flat = src_ngh_t_batch.flatten() #reshape(batch_size, -1)
             # src_ngh_t_batch_flat = (cut_times[:, np.newaxis] - np.zeros_like(src_ngh_t_batch)).flatten()
@@ -564,8 +552,7 @@ class TGCN(torch.nn.Module):
             src_ngh_feat = src_ngh_node_conv_feat.view(batch_size, num_neighbors, -1)
             mask = src_ngh_node_batch_th == 0
 
-            # if num_neighbors >= 30 and curr_distance + 1 == self.num_layers:
-            if self.prune and curr_distance + 1 == self.num_layers:
+            if num_neighbors >= 30 and curr_distance + 1 == self.num_layers and self.prune:
                 mask = self.prune_model(src_ngh_feat, mask)
 
             # get edge time features and node features
@@ -635,10 +622,6 @@ class ManagerWatchdog(object):
 def _workers(finder, index_queue, data_queue):
     watchdog = ManagerWatchdog()
     while watchdog.is_alive():
-        # try:
-        #     index_in = index_queue.get(timeout=MP_STATUS_CHECK_INTERVAL)
-        # except:
-        #     assert False # continue
         index_in = index_queue.get(timeout=100)
 
         if index_in[1] is None:
