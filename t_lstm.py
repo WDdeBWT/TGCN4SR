@@ -12,7 +12,7 @@ import torch.nn as nn
 #         self.W_d = nn.Linear(hidden_size, hidden_size)
 #         assert batch_first == True
 
-#     def forward(self, inputs, time_diff=None):
+#     def forward(self, inputs, time_diff=None, mask=None):
 #         # inputs: [b, seq, embed]
 #         # h: [b, hid]
 #         # c: [b, hid]
@@ -49,6 +49,7 @@ class TimeGRU(nn.Module):
         super(TimeGRU, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
+        self.lstm_cell = nn.LSTMCell(input_size, hidden_size)
         self.gru_cell = nn.GRUCell(input_size, hidden_size)
         assert batch_first == True
 
@@ -71,6 +72,10 @@ class TimeGRU(nn.Module):
                 c_adj = c * td_weight[:, s:s + 1].expand_as(c)
             else:
                 c_adj = c
+
+            # lstm version
+            # h, c_temp = self.lstm_cell(inputs[:, s], (h, c_adj))
+            # gru version
             c_temp = self.gru_cell(inputs[:, s], c_adj)
             if mask is not None:
                 c_temp[mask[:, s] == 1] = c[mask[:, s] == 1]

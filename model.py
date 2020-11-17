@@ -155,6 +155,8 @@ class LSTMPool(torch.nn.Module):
                     new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 5000000 # for newAmazon
                 elif self.data_set == 'goodreads_large':
                     new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 1000000 # for goodreads_large
+                elif self.data_set == 'ml_1m':
+                    new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 1000000 # for goodreads_large
                 else:
                     new_diff = (time_diff[:, time_diff.shape[1] - i - 1] - time_diff[:, time_diff.shape[1] - i]) / 1000000 # for goodreads_large
                     # assert False, 'False data_set'

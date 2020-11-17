@@ -2,7 +2,7 @@ import os
 import time
 import logging
 from multiprocessing import cpu_count
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 import tqdm
@@ -16,7 +16,7 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1115-1246'
+CODE_VERSION = '1117-1649'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
@@ -24,13 +24,13 @@ DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
 EPOCH = 10
 LR = 0.001
-BATCH_SIZE = 1024 + 512
+BATCH_SIZE = 2048
 NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
-if cpu_count() <= 2:
+if cpu_count() <= 4:
     # Colab mode
     NUM_WORKERS_DL = 0
-    NUM_WORKERS_SN = 2
+    NUM_WORKERS_SN = 4
 
 LAM = 1e-4
 FEATURE_DIM = 64
@@ -221,7 +221,7 @@ if __name__ == "__main__":
                     LAYERS, USE_TD, TARGET_MODE, MARGIN, PRUNE, NUM_WORKERS_SN, pos_encoder=POS_ENCODER,
                     agg_method=AGG_METHOD, n_head=N_HEAD, drop_out=DROP_OUT,
                     seq_len=seq_len, sa_layers=SA_LAYERS, data_set=DATASET).to(device)
-    optimizer = torch.optim.AdamW(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
+    optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
 
     if LOAD_VERSION is not None:
         load_checkpoint(tgcn_model, LOAD_VERSION + '-' + DATASET + '.pkl')
@@ -236,7 +236,7 @@ if __name__ == "__main__":
         evaluate(tgcn_model, valid_data_loader)
         ndcg_score = test(tgcn_model, test_data_loader, fast_test=True)
 
-        if ndcg_score > 0.25:
+        if ndcg_score > 0.24:
             logging.info('NDCG > 0.25, do retest')
             test(tgcn_model, test_data_loader)
 

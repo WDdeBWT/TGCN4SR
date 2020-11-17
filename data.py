@@ -219,13 +219,13 @@ def data_partition_amz(dataset_name='newAmazon'):
 
 
 if __name__ == "__main__":
-    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('goodreads_large')
+    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('ml_1m') # newAmazon, goodreads_large, ml_1m
     print(n_user, n_item)
     import matplotlib.pyplot as plt
     degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])
     print(degree_list.mean(), degree_list.var())
-    # plt.hist(x = degree_list, range=(0, 199), bins=100, color='steelblue', edgecolor='black')
-    plt.hist(x = degree_list, range=(0, 50), bins=50, color='steelblue', edgecolor='black')
+    plt.hist(x = degree_list, range=(0, 199), bins=100, color='steelblue', edgecolor='black')
+    # plt.hist(x = degree_list, range=(0, 50), bins=50, color='steelblue', edgecolor='black')
     # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
     # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
     plt.show()
