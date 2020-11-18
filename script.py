@@ -16,7 +16,7 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1118-1109'
+CODE_VERSION = '1118-2150'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
@@ -35,7 +35,7 @@ if cpu_count() <= 4:
 LAM = 1e-4
 FEATURE_DIM = 64 + 32
 EDGE_DIM = 8
-TIME_DIM = 16
+TIME_DIM = 0
 LAYERS = 2
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty

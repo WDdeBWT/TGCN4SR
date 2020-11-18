@@ -45,12 +45,15 @@ import torch.nn as nn
 
 
 class TimeGRU(nn.Module):
-    def __init__(self, input_size, hidden_size, batch_first=True):
+    def __init__(self, input_size, hidden_size, batch_first=True, gru_version=False):
         super(TimeGRU, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
-        self.lstm_cell = nn.LSTMCell(input_size, hidden_size)
-        self.gru_cell = nn.GRUCell(input_size, hidden_size)
+        self.gru_version = gru_version
+        if gru_version:
+            self.gru_cell = nn.GRUCell(input_size, hidden_size)
+        else:
+            self.lstm_cell = nn.LSTMCell(input_size, hidden_size)
         assert batch_first == True
 
     def forward(self, inputs, time_diff=None, mask=None):
@@ -74,13 +77,19 @@ class TimeGRU(nn.Module):
                 c_adj = c
 
             # lstm version
-            h, c_temp = self.lstm_cell(inputs[:, s], (h, c_adj))
-            # gru version
-            # c_temp = self.gru_cell(inputs[:, s], c_adj)
+            if self.gru_version:
+                c_temp = self.gru_cell(inputs[:, s], c_adj)
+            else:
+                h_temp, c_temp = self.lstm_cell(inputs[:, s], (h, c_adj))
+            gru version
             # if mask is not None:
             #     c_temp[mask[:, s] == 1] = c[mask[:, s] == 1]
+            #     if not self.gru_version:
+            #         h_temp[mask[:, s] == 1] = h[mask[:, s] == 1]
+            if self.gru_version:
+                h_temp = c_temp
             c = c_temp
-            h = c
+            h = h_temp
             outputs.append(h)
         outputs = torch.stack(outputs, 1)
         return outputs, (h.unsqueeze(0), c.unsqueeze(0))
