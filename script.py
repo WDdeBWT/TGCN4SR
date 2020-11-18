@@ -16,7 +16,7 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1117-1649'
+CODE_VERSION = '1118-1109'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
@@ -24,7 +24,7 @@ DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
 EPOCH = 10
 LR = 0.001
-BATCH_SIZE = 2048
+BATCH_SIZE = 1024 + 256
 NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 if cpu_count() <= 4:
@@ -33,9 +33,9 @@ if cpu_count() <= 4:
     NUM_WORKERS_SN = 4
 
 LAM = 1e-4
-FEATURE_DIM = 64
+FEATURE_DIM = 64 + 32
 EDGE_DIM = 8
-TIME_DIM = 0
+TIME_DIM = 16
 LAYERS = 2
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty

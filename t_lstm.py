@@ -74,11 +74,11 @@ class TimeGRU(nn.Module):
                 c_adj = c
 
             # lstm version
-            # h, c_temp = self.lstm_cell(inputs[:, s], (h, c_adj))
+            h, c_temp = self.lstm_cell(inputs[:, s], (h, c_adj))
             # gru version
-            c_temp = self.gru_cell(inputs[:, s], c_adj)
-            if mask is not None:
-                c_temp[mask[:, s] == 1] = c[mask[:, s] == 1]
+            # c_temp = self.gru_cell(inputs[:, s], c_adj)
+            # if mask is not None:
+            #     c_temp[mask[:, s] == 1] = c[mask[:, s] == 1]
             c = c_temp
             h = c
             outputs.append(h)
