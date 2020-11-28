@@ -7,6 +7,65 @@ import torch
 
 data_path = 'data/'
 
+# class TrainDataset(torch.utils.data.Dataset):
+
+#     def __init__(self, adj_list, n_user, n_item, min_train_seq):
+#         import random
+#         self.adj_list = adj_list
+#         self.n_user = n_user
+#         self.n_item = n_item
+#         self.min_train_seq = min_train_seq
+#         self.test_temp(adj_list, n_user, n_item, min_train_seq)
+
+#     def shuffle_temp(self):
+#         self.test_temp(self.adj_list, self.n_user, self.n_item, self.min_train_seq)
+
+#     def test_temp(self, adj_list, n_user, n_item, min_train_seq):
+#         self.instance_user = []
+#         self.instance_item = []
+#         self.instance_time = []
+#         self.user_map_only_item = defaultdict(list)
+
+#         u_list = list(adj_list.keys())
+#         random.shuffle(u_list)
+
+#         for u in u_list:
+#             if u >= n_user:
+#                 continue
+#             assert len(adj_list[u]) > min_train_seq
+#             sorted_tuple = sorted(adj_list[u], key=lambda x: x[2])
+#             # for x in sorted_tuple[2:]: # TODO: Try not use [2:]
+#             #     self.instance_user.append(u)
+#             #     self.instance_item.append(x[0])
+#             #     self.instance_time.append(x[2])
+#             # for i in range(2, len(sorted_tuple)):
+#             for i in range(min_train_seq - 1, len(sorted_tuple)):
+#                 self.instance_user.append(u)
+#                 self.instance_item.append(sorted_tuple[i][0])
+#                 self.instance_time.append(sorted_tuple[i - 1][2] + 1)
+#                 # self.instance_time.append(sorted_tuple[i][2])
+#             self.user_map_only_item[u] = [x[0] for x in sorted_tuple]
+#         assert len(self.instance_user) == len(self.instance_item)
+#         assert len(self.instance_user) == len(self.instance_time)
+#         self.n_user = n_user
+#         self.n_item = n_item
+
+#     def __len__(self):
+#         return len(self.instance_user)
+
+#     def __getitem__(self, index):
+#         user_id = self.instance_user[index]
+#         pos_id = self.instance_item[index]
+#         time_stamp = self.instance_time[index]
+#         while True:
+#             neg_id = np.random.randint(self.n_user, self.n_user + self.n_item)
+#             if neg_id in self.user_map_only_item[user_id]:
+#                 continue
+#             else:
+#                 break
+#         return user_id, pos_id, neg_id, time_stamp
+
+
 class TrainDataset(torch.utils.data.Dataset):
 
     def __init__(self, adj_list, n_user, n_item, min_train_seq):
@@ -145,8 +204,6 @@ class TestDataset(torch.utils.data.Dataset):
 def data_partition_amz(dataset_name='newAmazon'):
     n_user = 0
     n_item = 0
-    user_item_dict = defaultdict(list)
-    user_time_dict = defaultdict(list)
     adj_list_original = defaultdict(list)
     adj_list_train = defaultdict(list) # train data for valid
     adj_list_tandv = defaultdict(list) # full = train+valid, as the train data for test

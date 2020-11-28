@@ -76,12 +76,10 @@ class TimeGRU(nn.Module):
             else:
                 c_adj = c
 
-            # lstm version
             if self.gru_version:
                 c_temp = self.gru_cell(inputs[:, s], c_adj)
             else:
                 h_temp, c_temp = self.lstm_cell(inputs[:, s], (h, c_adj))
-            gru version
             # if mask is not None:
             #     c_temp[mask[:, s] == 1] = c[mask[:, s] == 1]
             #     if not self.gru_version:
