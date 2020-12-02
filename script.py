@@ -2,7 +2,7 @@ import os
 import time
 import logging
 from multiprocessing import cpu_count
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 import tqdm
@@ -16,24 +16,22 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1118-2150'
+CODE_VERSION = '1202-1447'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
-EPOCH = 10
+EPOCH = 15
 LR = 0.001
-BATCH_SIZE = 1024 + 256
-NUM_WORKERS_DL = 4 # dataloader workers, 0 for for single process
+BATCH_SIZE = 1024
+NUM_WORKERS_DL = 0 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 if cpu_count() <= 4:
-    # Colab mode
-    NUM_WORKERS_DL = 0
-    NUM_WORKERS_SN = 4
+    NUM_WORKERS_SN = cpu_count()
 
 LAM = 1e-4
-FEATURE_DIM = 64 + 32
+FEATURE_DIM = 64
 EDGE_DIM = 8
 TIME_DIM = 0
 LAYERS = 2
@@ -236,7 +234,7 @@ if __name__ == "__main__":
         evaluate(tgcn_model, valid_data_loader)
         ndcg_score = test(tgcn_model, test_data_loader, fast_test=True)
 
-        if ndcg_score > 0.24:
+        if ndcg_score > 0.25:
             logging.info('NDCG > 0.25, do retest')
             test(tgcn_model, test_data_loader)
 
