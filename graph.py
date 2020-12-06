@@ -2,13 +2,14 @@ import numpy as np
 import torch
 
 class NeighborFinder:
-    def __init__(self, adj_list, n_user, n_item, uniform=False, seed=None):
+    def __init__(self, adj_list, n_user, n_item, uniform=False, seed=None, use_mem=False):
         self.node_to_neighbors = []
         self.node_to_edge_idxs = []
         self.node_to_edge_timestamps = []
 
         adj_list_new = [[] for _ in range(n_user + n_item + 1)] # TODO: Not us +1
         for u in adj_list:
+            assert u != 0
             adj_list_new[u] = [x for x in adj_list[u]]
 
         for neighbors in adj_list_new:
@@ -27,6 +28,9 @@ class NeighborFinder:
         if seed is not None:
             self.seed = seed
             self.random_state = np.random.RandomState(self.seed)
+
+        self.ngh_memory = {}
+        self.use_mem = use_mem
 
     def find_before(self, src_idx, cut_time):
         # if src_idx == 0:
@@ -61,7 +65,14 @@ class NeighborFinder:
 
         for i, (source_node, timestamp) in enumerate(zip(batch_source_node, batch_timestamp)):
             # extracts all neighbors, interactions indexes and timestamps of all interactions of user source_node happening before cut_time
-            source_neighbors, source_edge_idxs, source_edge_times = self.find_before(source_node, timestamp)
+            if self.use_mem:
+                if (source_node, timestamp) in self.ngh_memory:
+                    source_neighbors, source_edge_idxs, source_edge_times = self.ngh_memory[source_node, timestamp]
+                else:
+                    source_neighbors, source_edge_idxs, source_edge_times = self.find_before(source_node, timestamp)
+                    self.ngh_memory[source_node, timestamp] = (source_neighbors, source_edge_idxs, source_edge_times)
+            else:
+                source_neighbors, source_edge_idxs, source_edge_times = self.find_before(source_node, timestamp)
 
             if len(source_neighbors) > 0 and n_neighbors > 0:
                 if self.uniform: # if we are applying uniform sampling, shuffles the data above before sampling
@@ -88,9 +99,9 @@ class NeighborFinder:
                     source_neighbors = source_neighbors[-n_neighbors:]
                     source_edge_idxs = source_edge_idxs[-n_neighbors:]
 
-                    assert (len(source_neighbors) <= n_neighbors)
-                    assert (len(source_edge_times) <= n_neighbors)
-                    assert (len(source_edge_idxs) <= n_neighbors)
+                    # assert (len(source_neighbors) <= n_neighbors)
+                    # assert (len(source_edge_times) <= n_neighbors)
+                    # assert (len(source_edge_idxs) <= n_neighbors)
 
                     out_neighbors[i, n_neighbors - len(source_neighbors):] = source_neighbors
                     out_timestamps[i, n_neighbors - len(source_edge_times):] = source_edge_times
