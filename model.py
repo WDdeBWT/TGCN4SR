@@ -261,7 +261,12 @@ class AttnModel(torch.nn.Module):
                                             d_v=self.model_dim // n_head,
                                             dropout=drop_out)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
+        self.attn_tgt = None
+
+    def set_tgt(self, attn_tgt):
+        self.attn_tgt = attn_tgt
+
+    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask, candidate=None):
         """"Attention based temporal attention forward pass
         args:
           src: float Tensor of shape [B, D]
@@ -278,13 +283,23 @@ class AttnModel(torch.nn.Module):
           weight: float Tensor of shape [B, N]
         """
 
+        # if seq.shape[0] != candidate.shape[0]:
+        #     candidate = candidate.unsqueeze(1).repeat(1, int(seq.shape[0] / candidate.shape[0]), 1).flatten(0, 1)
+        # attn_target = candidate
+        # attn_target = src
+
+        attn_target_tmp = self.attn_tgt
+        if seq.shape[0] != attn_target_tmp.shape[0]:
+            attn_target_tmp = attn_target_tmp.unsqueeze(1).repeat(1, int(seq.shape[0] / attn_target_tmp.shape[0]), 1).flatten(0, 1)
+        attn_target = attn_target_tmp
+
         mask = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
         mask = mask.permute([0, 2, 1]) #mask [B, 1, N]
 
-        src_ext = torch.unsqueeze(src, dim=1) # src [B, 1, D]
-        # src_e_ph = torch.zeros_like(src_ext)
-        src_e_ph = torch.zeros(src_ext.shape[0], src_ext.shape[1], self.edge_dim).to(src_ext)
-        q = torch.cat([src_ext, src_e_ph, src_t], dim=2) # [B, 1, D + De + Dt]
+        attn_tgt_ext = torch.unsqueeze(attn_target, dim=1) # src [B, 1, D]
+        # src_e_ph = torch.zeros_like(attn_tgt_ext)
+        src_e_ph = torch.zeros(attn_tgt_ext.shape[0], attn_tgt_ext.shape[1], self.edge_dim).to(attn_tgt_ext)
+        q = torch.cat([attn_tgt_ext, src_e_ph, src_t], dim=2) # [B, 1, D + De + Dt]
 
         if self.sa_layers == 0:
             k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, N, D + De + Dt]
@@ -316,12 +331,12 @@ class MixModel(torch.nn.Module):
         self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, n_head, drop_out, sa_layers)
         self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim, data_set=data_set)
 
-        self.weight_attn = nn.Parameter(torch.zeros(feat_dim))
+        # self.weight_attn = nn.Parameter(torch.zeros(feat_dim))
         # self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
         self.sim_gate = SimGate(feat_dim)
 
     def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask, candidate=None):
-        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
+        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask, candidate)
         lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
 
         # output = (attn_result + lstm_result) / 2 # Mean
@@ -480,13 +495,12 @@ class TGCN(torch.nn.Module):
             self.workers_alive = False
 
     def bpr_loss(self, src_nodes, tgt_nodes, neg_nodes, cut_times, num_neighbors=20):
-        src_embed_pos = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=tgt_nodes)
-        src_embed_neg = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=neg_nodes)
-        tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=src_nodes)
-        neg_embed = self.tem_conv(neg_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=src_nodes)
+        src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors)
+        tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors)
+        neg_embed = self.tem_conv(neg_nodes, cut_times, self.num_layers, 0, num_neighbors)
         if self.target_mode == 'prod':
-            pos_scores = torch.sum(src_embed_pos * tgt_embed, dim=1)
-            neg_scores = torch.sum(src_embed_neg * neg_embed, dim=1)
+            pos_scores = torch.sum(src_embed * tgt_embed, dim=1)
+            neg_scores = torch.sum(src_embed * neg_embed, dim=1)
             loss = torch.mean(nn.functional.softplus(neg_scores - pos_scores))
             # loss = torch.mean(torch.log(1 + torch.exp(neg_scores - pos_scores))) # same as softplus
         elif self.target_mode == 'dist':
@@ -497,38 +511,34 @@ class TGCN(torch.nn.Module):
             assert False, 'False target_mode'
         return loss
 
-    # def get_top_n(self, src_nodes, candidate_nodes, cut_times, num_neighbors=20, topk=20):
-    #     src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors)
-    #     batch_ratings = []
-    #     for cad, cut, src in zip(candidate_nodes, cut_times, src_embed):
-    #         cut = np.tile(cut, (cad.shape[0]))
-    #         candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors)
-    #         if self.target_mode == 'prod':
-    #             ratings = torch.matmul(candidate_embed, src) # shape=(101,)
-    #         elif self.target_mode == 'dist':
-    #             distance = F.pairwise_distance(candidate_embed, src, 2)
-    #             ratings = -distance
-    #         else:
-    #             assert False, 'False target_mode'
-    #         batch_ratings.append(ratings)
-    #     batch_ratings = torch.stack(batch_ratings) # shape=(batch_size, candidate_size)
-    #     if topk <= 0:
-    #         topk = batch_ratings.shape[1]
-    #     rate_k, index_k = torch.topk(batch_ratings, k=topk) # index_k.shape = (batch_size, TOPK), dtype=torch.int
-    #     batch_topk_ids = torch.gather(torch.Tensor(candidate_nodes).long().to(self.device), 1, index_k)
-    #     return batch_topk_ids
+    # def bpr_loss(self, src_nodes, tgt_nodes, neg_nodes, cut_times, num_neighbors=20):
+    #     src_embed_pos = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=tgt_nodes)
+    #     src_embed_neg = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=neg_nodes)
+    #     tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=src_nodes)
+    #     neg_embed = self.tem_conv(neg_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=src_nodes)
+    #     if self.target_mode == 'prod':
+    #         pos_scores = torch.sum(src_embed_pos * tgt_embed, dim=1)
+    #         neg_scores = torch.sum(src_embed_neg * neg_embed, dim=1)
+    #         loss = torch.mean(nn.functional.softplus(neg_scores - pos_scores))
+    #         # loss = torch.mean(torch.log(1 + torch.exp(neg_scores - pos_scores))) # same as softplus
+    #     elif self.target_mode == 'dist':
+    #         pos_dist = F.pairwise_distance(src_embed, tgt_embed, 2)
+    #         neg_dist = F.pairwise_distance(src_embed, neg_embed, 2)
+    #         loss = torch.sum(F.relu(pos_dist - neg_dist + self.maigin))
+    #     else:
+    #         assert False, 'False target_mode'
+    #     return loss
 
     def get_top_n(self, src_nodes, candidate_nodes, cut_times, num_neighbors=20, topk=20):
+        src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors)
         batch_ratings = []
-        for src, cad, cut in zip(src_nodes, candidate_nodes, cut_times):
-            src = np.tile(src, (cad.shape[0]))
+        for cad, cut, src in zip(candidate_nodes, cut_times, src_embed):
             cut = np.tile(cut, (cad.shape[0]))
-            src_embed = self.tem_conv(src, cut, self.num_layers, 0, num_neighbors, candidate=cad)
-            candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors, candidate=src)
+            candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors)
             if self.target_mode == 'prod':
-                ratings = torch.sum(candidate_embed * src_embed, dim=1) # shape=(101,)
+                ratings = torch.matmul(candidate_embed, src) # shape=(101,)
             elif self.target_mode == 'dist':
-                distance = F.pairwise_distance(candidate_embed, src_embed, 2)
+                distance = F.pairwise_distance(candidate_embed, src, 2)
                 ratings = -distance
             else:
                 assert False, 'False target_mode'
@@ -539,6 +549,28 @@ class TGCN(torch.nn.Module):
         rate_k, index_k = torch.topk(batch_ratings, k=topk) # index_k.shape = (batch_size, TOPK), dtype=torch.int
         batch_topk_ids = torch.gather(torch.Tensor(candidate_nodes).long().to(self.device), 1, index_k)
         return batch_topk_ids
+
+    # def get_top_n(self, src_nodes, candidate_nodes, cut_times, num_neighbors=20, topk=20):
+    #     batch_ratings = []
+    #     for src, cad, cut in zip(src_nodes, candidate_nodes, cut_times):
+    #         src = np.tile(src, (cad.shape[0]))
+    #         cut = np.tile(cut, (cad.shape[0]))
+    #         src_embed = self.tem_conv(src, cut, self.num_layers, 0, num_neighbors, candidate=cad)
+    #         candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors, candidate=src)
+    #         if self.target_mode == 'prod':
+    #             ratings = torch.sum(candidate_embed * src_embed, dim=1) # shape=(101,)
+    #         elif self.target_mode == 'dist':
+    #             distance = F.pairwise_distance(candidate_embed, src_embed, 2)
+    #             ratings = -distance
+    #         else:
+    #             assert False, 'False target_mode'
+    #         batch_ratings.append(ratings)
+    #     batch_ratings = torch.stack(batch_ratings) # shape=(batch_size, candidate_size)
+    #     if topk <= 0:
+    #         topk = batch_ratings.shape[1]
+    #     rate_k, index_k = torch.topk(batch_ratings, k=topk) # index_k.shape = (batch_size, TOPK), dtype=torch.int
+    #     batch_topk_ids = torch.gather(torch.Tensor(candidate_nodes).long().to(self.device), 1, index_k)
+    #     return batch_topk_ids
 
     def tem_conv(self, src_nodes, cut_times, curr_layers, curr_distance, num_neighbors=20, candidate=None):
         assert(curr_layers >= 0)
@@ -558,6 +590,8 @@ class TGCN(torch.nn.Module):
         if curr_layers == 0:
             if curr_distance == 0:
                 self.prune_model.set_src(src_node_feat, num_neighbors)
+                for attn_model in self.attn_model_list:
+                    attn_model.set_tgt(src_node_feat)
             return src_node_feat
         else:
             src_node_conv_feat = self.tem_conv(src_nodes,

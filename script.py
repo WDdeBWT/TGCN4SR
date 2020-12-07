@@ -2,7 +2,7 @@ import os
 import time
 import logging
 from multiprocessing import cpu_count
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 import tqdm
@@ -16,28 +16,30 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1202-1447'
+CODE_VERSION = '1207-1031'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
 DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
-EPOCH = 15
+EPOCH = 20
 LR = 0.001
-BATCH_SIZE = 1024
+BATCH_SIZE = 4096
 NUM_WORKERS_DL = 0 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
+USE_MEM = False
 if cpu_count() <= 4:
     NUM_WORKERS_SN = cpu_count()
+    USE_MEM = True
 
 LAM = 1e-4
 FEATURE_DIM = 64
 EDGE_DIM = 8
-TIME_DIM = 0
+TIME_DIM = 32
 LAYERS = 2
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty
-AGG_METHOD = 'mix' # attn, lstm, mean, mix
+AGG_METHOD = 'attn' # attn, lstm, mean, mix
 TARGET_MODE = 'prod' # prod, dist
 MARGIN = 10
 N_HEAD = 4
@@ -124,7 +126,7 @@ def evaluate(model, data_loader):
         model.del_workers()
 
 
-def test(model, data_loader, fast_test=False):
+def test(model, data_loader, fast_test=1):
     with torch.no_grad():
         logging.info('----- start_test -----')
         model.eval()
@@ -134,8 +136,8 @@ def test(model, data_loader, fast_test=False):
         ndcg_score = []
         for i, (user_id, target_id, candidate_ids, time_stamp) in enumerate(tqdm.tqdm(data_loader)):
 
-            if fast_test:
-                cut_len = len(user_id) // 10
+            if fast_test != 1:
+                cut_len = len(user_id) // fast_test
                 user_id = user_id[:cut_len]
                 target_id = target_id[:cut_len]
                 candidate_ids = candidate_ids[:cut_len]
@@ -204,8 +206,8 @@ if __name__ == "__main__":
     valid_data_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS_DL)
     test_data_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS_DL)
 
-    train_ngh_finder = NeighborFinder(adj_list_train, n_user, n_item, uniform=UNIFORM) # Initialize training neighbor finder(use train edges)
-    test_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, uniform=UNIFORM) # Initialize test neighbor finder(use train and valid edges)
+    train_ngh_finder = NeighborFinder(adj_list_train, n_user, n_item, uniform=UNIFORM, use_mem=USE_MEM) # Initialize training neighbor finder(use train edges)
+    test_ngh_finder = NeighborFinder(adj_list_tandv, n_user, n_item, uniform=UNIFORM, use_mem=USE_MEM) # Initialize test neighbor finder(use train and valid edges)
 
     if POS_ENCODER == 'pos':
         seq_len = 0
@@ -224,7 +226,7 @@ if __name__ == "__main__":
     if LOAD_VERSION is not None:
         load_checkpoint(tgcn_model, LOAD_VERSION + '-' + DATASET + '.pkl')
         tgcn_model.ngh_finder = test_ngh_finder
-        test(tgcn_model, test_data_loader, fast_test=True)
+        test(tgcn_model, test_data_loader, fast_test=10)
         tgcn_model.ngh_finder = train_ngh_finder
 
     for epoch_i in range(EPOCH):
@@ -232,11 +234,22 @@ if __name__ == "__main__":
         train(tgcn_model, train_data_loader, optimizer)
         tgcn_model.ngh_finder = test_ngh_finder
         evaluate(tgcn_model, valid_data_loader)
-        ndcg_score = test(tgcn_model, test_data_loader, fast_test=True)
+        ndcg_score = test(tgcn_model, test_data_loader, fast_test=3)
 
-        if ndcg_score > 0.25:
-            logging.info('NDCG > 0.25, do retest')
-            test(tgcn_model, test_data_loader)
+        if DATASET == 'newAmazon':
+            if ndcg_score > 0.248:
+                logging.info('NDCG > 0.248, do 1/3 retest')
+                ndcg_score = test(tgcn_model, test_data_loader, fast_test=2)
+            if ndcg_score > 0.255:
+                logging.info('NDCG > 0.255, do full retest')
+                test(tgcn_model, test_data_loader)
+        else:
+            if ndcg_score > 0.44:
+                logging.info('NDCG > 0.44, do 1/3 retest')
+                ndcg_score = test(tgcn_model, test_data_loader, fast_test=2)
+            if ndcg_score > 0.46:
+                logging.info('NDCG > 0.46, do full retest')
+                test(tgcn_model, test_data_loader) 
 
         tgcn_model.ngh_finder = train_ngh_finder
         logging.info('--------------------------------------------------')
@@ -265,4 +278,4 @@ if __name__ == "__main__":
         save_path = CODE_VERSION + '-' + DATASET + '.pkl'
         torch.save(file_to_save, save_path)
     tgcn_model.ngh_finder = test_ngh_finder
-    test(tgcn_model, test_data_loader, fast_test=True)
+    test(tgcn_model, test_data_loader, fast_test=5)
