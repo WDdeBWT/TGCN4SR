@@ -144,24 +144,23 @@ class MultiHeadAttention(nn.Module):
 
 
 class LSTMPool(torch.nn.Module):
-    def __init__(self, feat_dim, edge_dim, time_dim, data_set='newAmazon'):
+    def __init__(self, feat_dim, time_dim, data_set='newAmazon'):
         super(LSTMPool, self).__init__()
         self.feat_dim = feat_dim
         self.time_dim = time_dim
-        self.edge_dim = edge_dim
 
         # self.att_dim = feat_dim + edge_dim + time_dim
-        self.att_dim = feat_dim + edge_dim
+        self.att_dim = feat_dim
 
         self.lstm = TimeGRU(input_size=self.att_dim, hidden_size=self.feat_dim, batch_first=True)
         self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
         self.data_set = data_set
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask):
+    def forward(self, src, src_t, seq, seq_t, time_diff, mask):
         # seq [B, N, D]
         # mask [B, N]
-        # seq_x = torch.cat([seq, seq_e, seq_t], dim=2)
-        seq_x = torch.cat([seq, seq_e], dim=2)
+        # seq_x = torch.cat([seq, seq_t], dim=2)
+        seq_x = torch.cat([seq], dim=2)
 
         if time_diff is not None:
             time_span = time_diff.clone()
@@ -201,18 +200,17 @@ class LSTMPool(torch.nn.Module):
 
 
 class MeanPool(torch.nn.Module):
-    def __init__(self, feat_dim, edge_dim):
+    def __init__(self, feat_dim):
         super(MeanPool, self).__init__()
-        self.edge_dim = edge_dim
         self.feat_dim = feat_dim
         self.act = torch.nn.ReLU()
-        self.merger = MergeLayer(edge_dim + feat_dim, feat_dim, feat_dim, feat_dim)
+        self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, _, mask):
+    def forward(self, src, src_t, seq, seq_t, _, mask):
         # seq [B, N, D]
         # mask [B, N]
         src_x = src
-        seq_x = torch.cat([seq, seq_e], dim=2) #[B, N, De + D]
+        seq_x = torch.cat([seq,], dim=2) #[B, N, De + D]
         hn = seq_x.mean(dim=1) #[B, De + D]
         output = self.merger(hn, src_x)
         return output, None
@@ -221,7 +219,7 @@ class MeanPool(torch.nn.Module):
 class AttnModel(torch.nn.Module):
     """Attention based temporal layers
     """
-    def __init__(self, feat_dim, edge_dim, time_dim, 
+    def __init__(self, feat_dim, time_dim, 
                  n_head=2, drop_out=0.1, sa_layers=0):
         """
         args:
@@ -234,10 +232,9 @@ class AttnModel(torch.nn.Module):
         super(AttnModel, self).__init__()
 
         self.feat_dim = feat_dim
-        self.edge_dim = edge_dim
         self.time_dim = time_dim
 
-        self.edge_in_dim = (feat_dim + edge_dim + time_dim)
+        self.edge_in_dim = (feat_dim + time_dim)
         self.model_dim = self.edge_in_dim
         self.transformer_dim = feat_dim + time_dim
         #self.edge_fc = torch.nn.Linear(self.edge_in_dim, self.feat_dim, bias=False)
@@ -266,7 +263,7 @@ class AttnModel(torch.nn.Module):
     def set_tgt(self, attn_tgt):
         self.attn_tgt = attn_tgt
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask, candidate=None):
+    def forward(self, src, src_t, seq, seq_t, time_diff, mask, candidate=None):
         """"Attention based temporal attention forward pass
         args:
           src: float Tensor of shape [B, D]
@@ -283,26 +280,25 @@ class AttnModel(torch.nn.Module):
           weight: float Tensor of shape [B, N]
         """
 
+        attn_target = src
+
         # if seq.shape[0] != candidate.shape[0]:
         #     candidate = candidate.unsqueeze(1).repeat(1, int(seq.shape[0] / candidate.shape[0]), 1).flatten(0, 1)
         # attn_target = candidate
-        # attn_target = src
 
-        attn_target_tmp = self.attn_tgt
-        if seq.shape[0] != attn_target_tmp.shape[0]:
-            attn_target_tmp = attn_target_tmp.unsqueeze(1).repeat(1, int(seq.shape[0] / attn_target_tmp.shape[0]), 1).flatten(0, 1)
-        attn_target = attn_target_tmp
+        # attn_target_tmp = self.attn_tgt
+        # if seq.shape[0] != attn_target_tmp.shape[0]:
+        #     attn_target_tmp = attn_target_tmp.unsqueeze(1).repeat(1, int(seq.shape[0] / attn_target_tmp.shape[0]), 1).flatten(0, 1)
+        # attn_target = attn_target_tmp
 
         mask = torch.unsqueeze(mask, dim=2) # mask [B, N, 1]
         mask = mask.permute([0, 2, 1]) #mask [B, 1, N]
 
         attn_tgt_ext = torch.unsqueeze(attn_target, dim=1) # src [B, 1, D]
-        # src_e_ph = torch.zeros_like(attn_tgt_ext)
-        src_e_ph = torch.zeros(attn_tgt_ext.shape[0], attn_tgt_ext.shape[1], self.edge_dim).to(attn_tgt_ext)
-        q = torch.cat([attn_tgt_ext, src_e_ph, src_t], dim=2) # [B, 1, D + De + Dt]
+        q = torch.cat([attn_tgt_ext, src_t], dim=2) # [B, 1, D + De + Dt]
 
         if self.sa_layers == 0:
-            k = torch.cat([seq, seq_e, seq_t], dim=2) # [B, N, D + De + Dt]
+            k = torch.cat([seq, seq_t], dim=2) # [B, N, D + De + Dt]
         else:
             t_k_list = []
             t_k = torch.cat([seq, seq_t], dim=2) # [B, N, D + Dt]
@@ -310,7 +306,7 @@ class AttnModel(torch.nn.Module):
                 t_k, _ = self.transformer_modules[i](q=t_k, k=t_k, v=t_k, time_diff=None, mask=mask, use_res=True)
                 t_k_list.append(t_k)
             t_k = torch.stack(t_k_list, dim=0).mean(dim=0)
-            k = torch.cat((t_k[:, :, :seq.shape[2]], seq_e, t_k[:, :, seq.shape[2]:]), dim=-1)
+            k = torch.cat((t_k[:, :, :seq.shape[2]], t_k[:, :, seq.shape[2]:]), dim=-1)
 
         # # target-attention
         # output, attn = self.multi_head_target(q=q, k=k, v=k, mask=mask) # output: [B, 1, D + Dt], attn: [B, 1, N]
@@ -325,28 +321,31 @@ class AttnModel(torch.nn.Module):
 class MixModel(torch.nn.Module):
     """Attention based temporal layers
     """
-    def __init__(self, feat_dim, edge_dim, time_dim, 
+    def __init__(self, feat_dim, time_dim, 
                  n_head=2, drop_out=0.1, sa_layers=0, data_set='newAmazon'):
         super(MixModel, self).__init__()
-        self.attn_model = AttnModel(feat_dim, edge_dim, time_dim, n_head, drop_out, sa_layers)
-        self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim, data_set=data_set)
+        self.attn_model = AttnModel(feat_dim, time_dim, n_head, drop_out, sa_layers)
+        self.lstm_model = LSTMPool(feat_dim, time_dim, data_set=data_set)
 
         # self.weight_attn = nn.Parameter(torch.zeros(feat_dim))
         # self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
-        self.sim_gate = SimGate(feat_dim)
+        # self.sim_gate = SimGate(feat_dim)
 
-    def forward(self, src, src_t, seq, seq_t, seq_e, time_diff, mask, candidate=None):
-        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask, candidate)
-        lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
+    def set_tgt(self, attn_tgt):
+        self.attn_model.set_tgt(attn_tgt)
 
-        # output = (attn_result + lstm_result) / 2 # Mean
+    def forward(self, src, src_t, seq, seq_t, time_diff, mask, candidate=None):
+        attn_result, _ = self.attn_model(src, src_t, seq, seq_t, time_diff, mask, candidate)
+        lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, time_diff, mask)
+
+        output = (attn_result + lstm_result) / 2 # Mean
         # output = (0.5 + self.weight_attn) * attn_result + (0.5 - self.weight_attn) * lstm_result # Weighted sum
         # output = torch.max(torch.stack((attn_result, lstm_result), dim=1), dim=1)[0] # Max pool
         # output = self.merger(attn_result, lstm_result) # Concat & fc
         # TODO: Try attention
-        assert candidate is not None
-        w1 = self.sim_gate(attn_result, lstm_result, candidate)
-        output = w1 * attn_result + (1 - w1) * lstm_result # Weighted sum
+        # assert candidate is not None
+        # w1 = self.sim_gate(attn_result, lstm_result, candidate)
+        # output = w1 * attn_result + (1 - w1) * lstm_result # Weighted sum
 
         return output, None
 
@@ -374,14 +373,13 @@ class PruneModel(torch.nn.Module):
 
 
 class TGCN(torch.nn.Module):
-    def __init__(self, ngh_finder, feat_dim, edge_dim, time_dim, n_node, n_edge, device='cpu', num_layers=3, use_td=False, target_mode='prod', maigin=10, prune=False,
+    def __init__(self, ngh_finder, feat_dim, time_dim, n_node, device='cpu', num_layers=3, use_td=False, target_mode='prod', maigin=10, prune=False,
                  num_workers=0, pos_encoder='time', agg_method='attn', n_head=4, drop_out=0.1, seq_len=None, sa_layers=0, data_set='newAmazon'):
         super(TGCN, self).__init__()
         self.workers_alive = False
 
         self.ngh_finder = ngh_finder
         self.feat_dim = feat_dim # feature_dim
-        self.edge_dim = edge_dim # edge_dim
         self.time_dim = time_dim # time_dim
         self.device = device
         self.num_layers = num_layers
@@ -396,9 +394,7 @@ class TGCN(torch.nn.Module):
             self.num_workers = num_workers if num_workers != 0 else cpu_count() // 2
 
         self.node_embed = torch.nn.Embedding(num_embeddings=n_node, embedding_dim=self.feat_dim)
-        self.edge_embed = torch.nn.Embedding(num_embeddings=n_edge, embedding_dim=self.edge_dim)
         nn.init.xavier_uniform_(self.node_embed.weight, gain=1)
-        nn.init.xavier_uniform_(self.edge_embed.weight, gain=1)
 
         # Choose position encoder
         if self.time_dim != 0:
@@ -421,7 +417,6 @@ class TGCN(torch.nn.Module):
         if agg_method == 'attn':
             logging.info('Aggregation uses attention model')
             self.attn_model_list = torch.nn.ModuleList([AttnModel(self.feat_dim,
-                                                                  self.edge_dim,
                                                                   self.time_dim,
                                                                   n_head=n_head,
                                                                   drop_out=drop_out,
@@ -429,17 +424,14 @@ class TGCN(torch.nn.Module):
         elif agg_method == 'lstm':
             logging.info('Aggregation uses LSTM model')
             self.attn_model_list = torch.nn.ModuleList([LSTMPool(self.feat_dim,
-                                                                 self.edge_dim,
                                                                  self.time_dim,
                                                                  data_set=data_set) for _ in range(num_layers)])
         elif agg_method == 'mean':
             logging.info('Aggregation uses constant mean model')
-            self.attn_model_list = torch.nn.ModuleList([MeanPool(self.feat_dim,
-                                                                 self.edge_dim) for _ in range(num_layers)])
+            self.attn_model_list = torch.nn.ModuleList([MeanPool(self.feat_dim) for _ in range(num_layers)])
         elif agg_method == 'mix':
             logging.info('Aggregation uses attention model')
             self.attn_model_list = torch.nn.ModuleList([MixModel(self.feat_dim,
-                                                                  self.edge_dim,
                                                                   self.time_dim,
                                                                   n_head=n_head,
                                                                   drop_out=drop_out,
@@ -494,6 +486,25 @@ class TGCN(torch.nn.Module):
             self.data_queue = None
             self.workers_alive = False
 
+    def mf_bpr_loss(self, src_nodes, tgt_nodes, neg_nodes, cut_times, num_neighbors=20):
+        src_embed = self.node_embed(torch.from_numpy(src_nodes).long().to(self.device))
+        tgt_embed = self.node_embed(torch.from_numpy(tgt_nodes).long().to(self.device))
+        neg_embed = self.node_embed(torch.from_numpy(neg_nodes).long().to(self.device))
+        reg_loss = src_embed.norm(2).pow(2) + tgt_embed.norm(2).pow(2) + neg_embed.norm(2).pow(2)
+        if self.target_mode == 'prod':
+            pos_scores = torch.sum(src_embed * tgt_embed, dim=1)
+            neg_scores = torch.sum(src_embed * neg_embed, dim=1)
+            loss = torch.mean(nn.functional.softplus(neg_scores - pos_scores))
+            # loss = torch.mean(torch.log(1 + torch.exp(neg_scores - pos_scores))) # same as softplus
+        elif self.target_mode == 'dist':
+            pos_dist = F.pairwise_distance(src_embed, tgt_embed, 2)
+            neg_dist = F.pairwise_distance(src_embed, neg_embed, 2)
+            loss = torch.sum(F.relu(pos_dist - neg_dist + self.maigin))
+        else:
+            assert False, 'False target_mode'
+        reg_loss = (1/2) * reg_loss / float(len(src_nodes))
+        return loss + (1e-4) * reg_loss
+
     def bpr_loss(self, src_nodes, tgt_nodes, neg_nodes, cut_times, num_neighbors=20):
         src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors)
         tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors)
@@ -528,6 +539,27 @@ class TGCN(torch.nn.Module):
     #     else:
     #         assert False, 'False target_mode'
     #     return loss
+
+    def mf_get_top_n(self, src_nodes, candidate_nodes, cut_times, num_neighbors=20, topk=20):
+        src_embed = self.node_embed(torch.from_numpy(src_nodes).long().to(self.device))
+        batch_ratings = []
+        for cad, cut, src in zip(candidate_nodes, cut_times, src_embed):
+            cut = np.tile(cut, (cad.shape[0]))
+            candidate_embed = self.node_embed(torch.from_numpy(cad).long().to(self.device))
+            if self.target_mode == 'prod':
+                ratings = torch.matmul(candidate_embed, src) # shape=(101,)
+            elif self.target_mode == 'dist':
+                distance = F.pairwise_distance(candidate_embed, src, 2)
+                ratings = -distance
+            else:
+                assert False, 'False target_mode'
+            batch_ratings.append(ratings)
+        batch_ratings = torch.stack(batch_ratings) # shape=(batch_size, candidate_size)
+        if topk <= 0:
+            topk = batch_ratings.shape[1]
+        rate_k, index_k = torch.topk(batch_ratings, k=topk) # index_k.shape = (batch_size, TOPK), dtype=torch.int
+        batch_topk_ids = torch.gather(torch.Tensor(candidate_nodes).long().to(self.device), 1, index_k)
+        return batch_topk_ids
 
     def get_top_n(self, src_nodes, candidate_nodes, cut_times, num_neighbors=20, topk=20):
         src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors)
@@ -590,8 +622,8 @@ class TGCN(torch.nn.Module):
         if curr_layers == 0:
             if curr_distance == 0:
                 self.prune_model.set_src(src_node_feat, num_neighbors)
-                for attn_model in self.attn_model_list:
-                    attn_model.set_tgt(src_node_feat)
+                # for attn_model in self.attn_model_list:
+                #     attn_model.set_tgt(src_node_feat)
             return src_node_feat
         else:
             src_node_conv_feat = self.tem_conv(src_nodes,
@@ -610,7 +642,6 @@ class TGCN(torch.nn.Module):
                 src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.parallel_ngh_find(src_nodes, cut_times, num_neighbors)
 
             src_ngh_node_batch_th = torch.from_numpy(src_ngh_node_batch).long().to(self.device)
-            src_ngh_eidx_batch = torch.from_numpy(src_ngh_eidx_batch).long().to(self.device)
 
             src_ngh_t_batch_delta = cut_times[:, np.newaxis] - src_ngh_t_batch
             src_ngh_t_batch_th = torch.from_numpy(src_ngh_t_batch_delta).float().to(self.device)
@@ -636,7 +667,6 @@ class TGCN(torch.nn.Module):
 
             # get edge time features and node features
             src_ngh_t_embed = self.time_encoder(src_ngh_t_batch_th)
-            src_ngn_edge_feat = self.edge_embed(src_ngh_eidx_batch)
 
             # attention aggregation
             attn_m = self.attn_model_list[curr_layers - 1]
@@ -653,7 +683,6 @@ class TGCN(torch.nn.Module):
                                    src_node_t_embed,
                                    src_ngh_feat,
                                    src_ngh_t_embed,
-                                   src_ngn_edge_feat,
                                    time_diff,
                                    mask,
                                    candidate)

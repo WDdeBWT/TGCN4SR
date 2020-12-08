@@ -16,7 +16,7 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1207-1031'
+CODE_VERSION = '1207-2131'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
@@ -24,7 +24,7 @@ DATASET = 'newAmazon' # newAmazon, goodreads_large
 TOPK = 5
 EPOCH = 20
 LR = 0.001
-BATCH_SIZE = 4096
+BATCH_SIZE = 1024
 NUM_WORKERS_DL = 0 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 USE_MEM = False
@@ -34,12 +34,11 @@ if cpu_count() <= 4:
 
 LAM = 1e-4
 FEATURE_DIM = 64
-EDGE_DIM = 8
 TIME_DIM = 32
 LAYERS = 2
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty
-AGG_METHOD = 'attn' # attn, lstm, mean, mix
+AGG_METHOD = 'mix' # attn, lstm, mean, mix
 TARGET_MODE = 'prod' # prod, dist
 MARGIN = 10
 N_HEAD = 4
@@ -168,7 +167,6 @@ def load_checkpoint(model, file_path):
         'DATASET': DATASET,
         'LAM': LAM,
         'FEATURE_DIM': FEATURE_DIM,
-        'EDGE_DIM': EDGE_DIM,
         'TIME_DIM': TIME_DIM,
         'LAYERS': LAYERS,
         'NUM_NEIGHBORS': NUM_NEIGHBORS,
@@ -217,7 +215,7 @@ if __name__ == "__main__":
     else:
         seq_len = None
 
-    tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, EDGE_DIM, TIME_DIM, n_user+n_item, 2, device,
+    tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, TIME_DIM, n_user+n_item, device,
                     LAYERS, USE_TD, TARGET_MODE, MARGIN, PRUNE, NUM_WORKERS_SN, pos_encoder=POS_ENCODER,
                     agg_method=AGG_METHOD, n_head=N_HEAD, drop_out=DROP_OUT,
                     seq_len=seq_len, sa_layers=SA_LAYERS, data_set=DATASET).to(device)
@@ -238,14 +236,14 @@ if __name__ == "__main__":
 
         if DATASET == 'newAmazon':
             if ndcg_score > 0.248:
-                logging.info('NDCG > 0.248, do 1/3 retest')
+                logging.info('NDCG > 0.248, do 1/2 retest')
                 ndcg_score = test(tgcn_model, test_data_loader, fast_test=2)
             if ndcg_score > 0.255:
                 logging.info('NDCG > 0.255, do full retest')
                 test(tgcn_model, test_data_loader)
         else:
             if ndcg_score > 0.44:
-                logging.info('NDCG > 0.44, do 1/3 retest')
+                logging.info('NDCG > 0.44, do 1/2 retest')
                 ndcg_score = test(tgcn_model, test_data_loader, fast_test=2)
             if ndcg_score > 0.46:
                 logging.info('NDCG > 0.46, do full retest')
@@ -260,7 +258,6 @@ if __name__ == "__main__":
             'DATASET': DATASET,
             'LAM': LAM,
             'FEATURE_DIM': FEATURE_DIM,
-            'EDGE_DIM': EDGE_DIM,
             'TIME_DIM': TIME_DIM,
             'LAYERS': LAYERS,
             'NUM_NEIGHBORS': NUM_NEIGHBORS,
@@ -278,4 +275,4 @@ if __name__ == "__main__":
         save_path = CODE_VERSION + '-' + DATASET + '.pkl'
         torch.save(file_to_save, save_path)
     tgcn_model.ngh_finder = test_ngh_finder
-    test(tgcn_model, test_data_loader, fast_test=5)
+    test(tgcn_model, test_data_loader)
