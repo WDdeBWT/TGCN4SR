@@ -16,15 +16,16 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1207-2131'
+CODE_VERSION = '1211-2234'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
-DATASET = 'newAmazon' # newAmazon, goodreads_large
+DATASET = 'goodreads_large' # newAmazon, goodreads_large
 TOPK = 5
+PRETRAIN_EPOCH = 0 # 20
 EPOCH = 20
 LR = 0.001
-BATCH_SIZE = 1024
+BATCH_SIZE = 256 + 64
 NUM_WORKERS_DL = 0 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 USE_MEM = False
@@ -32,13 +33,16 @@ if cpu_count() <= 4:
     NUM_WORKERS_SN = cpu_count()
     USE_MEM = True
 
-LAM = 1e-4
 FEATURE_DIM = 64
+EDGE_DIM = 8
 TIME_DIM = 32
-LAYERS = 2
-NUM_NEIGHBORS = 20
+NUM_NEIGHBORS = 40
 POS_ENCODER = 'pos' # time, pos, empty
 AGG_METHOD = 'mix' # attn, lstm, mean, mix
+PRUNE = False
+
+LAM = 1e-4
+LAYERS = 2
 TARGET_MODE = 'prod' # prod, dist
 MARGIN = 10
 N_HEAD = 4
@@ -46,7 +50,6 @@ DROP_OUT = 0.1
 USE_TD = True # use time_diff
 SA_LAYERS = 0 # self_attn layers
 UNIFORM = False
-PRUNE = False
 if DATASET == 'newAmazon':
     MIN_TRAIN_SEQ = 5
 elif DATASET == 'goodreads_large':
@@ -76,7 +79,7 @@ if torch.cuda.is_available():
     logger.addHandler(logfile_h)
 
 
-def train(model, data_loader, optimizer, log_interval=100):
+def train(model, data_loader, optimizer, is_pretrain=False, log_interval=100):
     time_start = time.time()
     model.train()
     model.init_workers()
@@ -88,7 +91,10 @@ def train(model, data_loader, optimizer, log_interval=100):
         pos_id = pos_id.numpy()
         neg_id = neg_id.numpy()
         time_stamp = time_stamp.numpy()
-        loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
+        if is_pretrain:
+            loss = model.mf_bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
+        else:
+            loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
         model.zero_grad()
         loss.backward()
         optimizer.step()
@@ -106,7 +112,7 @@ def train(model, data_loader, optimizer, log_interval=100):
     logging.info('Train one epoch time: ' + '%.2f' % total_time + 's')
 
 
-def evaluate(model, data_loader):
+def evaluate(model, data_loader, is_pretrain=False):
     with torch.no_grad():
         # logging.info('----- start_evaluate -----')
         model.eval()
@@ -118,14 +124,17 @@ def evaluate(model, data_loader):
             pos_id = pos_id.numpy()
             neg_id = neg_id.numpy()
             time_stamp = time_stamp.numpy()
-            loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
+            if is_pretrain:
+                loss = model.mf_bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
+            else:
+                loss = model.bpr_loss(user_id, pos_id, neg_id, time_stamp, num_neighbors=NUM_NEIGHBORS)
             total_loss += loss.cpu().item()
         avg_loss = total_loss / len(data_loader)
         logging.info('evaluate loss: ' + '%.3f' % avg_loss)
         model.del_workers()
 
 
-def test(model, data_loader, fast_test=1):
+def test(model, data_loader, is_pretrain=False, fast_test=1):
     with torch.no_grad():
         logging.info('----- start_test -----')
         model.eval()
@@ -147,7 +156,10 @@ def test(model, data_loader, fast_test=1):
             candidate_ids = candidate_ids.numpy()
             time_stamp = time_stamp.numpy()
             # logging.info(candidate_ids.shape) # (2048, 101)
-            batch_topk_ids = model.get_top_n(user_id, candidate_ids, time_stamp, num_neighbors=NUM_NEIGHBORS, topk=TOPK).cpu().numpy()
+            if is_pretrain:
+                batch_topk_ids = model.mf_get_top_n(user_id, candidate_ids, time_stamp, num_neighbors=NUM_NEIGHBORS, topk=TOPK).cpu().numpy()
+            else:
+                batch_topk_ids = model.get_top_n(user_id, candidate_ids, time_stamp, num_neighbors=NUM_NEIGHBORS, topk=TOPK).cpu().numpy()
             batch_ndcg = ndcg(batch_topk_ids, target_id)
             ndcg_score.append(batch_ndcg)
             for tgt, topk_ids in zip(target_id, batch_topk_ids):
@@ -167,6 +179,7 @@ def load_checkpoint(model, file_path):
         'DATASET': DATASET,
         'LAM': LAM,
         'FEATURE_DIM': FEATURE_DIM,
+        'EDGE_DIM': EDGE_DIM,
         'TIME_DIM': TIME_DIM,
         'LAYERS': LAYERS,
         'NUM_NEIGHBORS': NUM_NEIGHBORS,
@@ -215,10 +228,12 @@ if __name__ == "__main__":
     else:
         seq_len = None
 
-    tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, TIME_DIM, n_user+n_item, device,
+    tgcn_model = TGCN(train_ngh_finder, FEATURE_DIM, EDGE_DIM, TIME_DIM, n_user+n_item, 2, device,
                     LAYERS, USE_TD, TARGET_MODE, MARGIN, PRUNE, NUM_WORKERS_SN, pos_encoder=POS_ENCODER,
                     agg_method=AGG_METHOD, n_head=N_HEAD, drop_out=DROP_OUT,
                     seq_len=seq_len, sa_layers=SA_LAYERS, data_set=DATASET).to(device)
+    if PRETRAIN_EPOCH != 0:
+        optimizer_pretrain = torch.optim.AdamW(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
     optimizer = torch.optim.Adam(params=tgcn_model.parameters(), lr=LR, weight_decay=LAM)
 
     if LOAD_VERSION is not None:
@@ -226,6 +241,12 @@ if __name__ == "__main__":
         tgcn_model.ngh_finder = test_ngh_finder
         test(tgcn_model, test_data_loader, fast_test=10)
         tgcn_model.ngh_finder = train_ngh_finder
+
+    for epoch_i in range(PRETRAIN_EPOCH):
+        logging.info('Pretrain mf - epoch ' + str(epoch_i + 1) + '/' + str(PRETRAIN_EPOCH))
+        train(tgcn_model, train_data_loader, optimizer_pretrain, is_pretrain=True)
+        evaluate(tgcn_model, valid_data_loader, is_pretrain=True)
+        ndcg_score = test(tgcn_model, test_data_loader, is_pretrain=True, fast_test=3)
 
     for epoch_i in range(EPOCH):
         logging.info('Train tgcn - epoch ' + str(epoch_i + 1) + '/' + str(EPOCH))
@@ -242,11 +263,11 @@ if __name__ == "__main__":
                 logging.info('NDCG > 0.255, do full retest')
                 test(tgcn_model, test_data_loader)
         else:
-            if ndcg_score > 0.44:
-                logging.info('NDCG > 0.44, do 1/2 retest')
+            if ndcg_score > 0.43:
+                logging.info('NDCG > 0.43, do 1/2 retest')
                 ndcg_score = test(tgcn_model, test_data_loader, fast_test=2)
-            if ndcg_score > 0.46:
-                logging.info('NDCG > 0.46, do full retest')
+            if ndcg_score > 0.45:
+                logging.info('NDCG > 0.45, do full retest')
                 test(tgcn_model, test_data_loader) 
 
         tgcn_model.ngh_finder = train_ngh_finder
@@ -258,6 +279,7 @@ if __name__ == "__main__":
             'DATASET': DATASET,
             'LAM': LAM,
             'FEATURE_DIM': FEATURE_DIM,
+            'EDGE_DIM': EDGE_DIM,
             'TIME_DIM': TIME_DIM,
             'LAYERS': LAYERS,
             'NUM_NEIGHBORS': NUM_NEIGHBORS,
