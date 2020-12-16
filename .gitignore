@@ -5,6 +5,10 @@ test.py
 .vscode/
 exclude.txt
 .stignore
+.DS_Store
+*.dat
+*.txt
+*.gz
 
 data/
 

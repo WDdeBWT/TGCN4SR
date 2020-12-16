@@ -16,16 +16,16 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1211-2234'
+CODE_VERSION = '1216-2000'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
-DATASET = 'goodreads_large' # newAmazon, goodreads_large
+DATASET = 'steam' # newAmazon, goodreads_large, vidio_core5
 TOPK = 5
-PRETRAIN_EPOCH = 0 # 20
+PRETRAIN_EPOCH = 10 # 20
 EPOCH = 20
 LR = 0.001
-BATCH_SIZE = 256 + 64
+BATCH_SIZE = 4096 + 2048
 NUM_WORKERS_DL = 0 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 USE_MEM = False
@@ -33,12 +33,12 @@ if cpu_count() <= 4:
     NUM_WORKERS_SN = cpu_count()
     USE_MEM = True
 
-FEATURE_DIM = 64
+FEATURE_DIM = 32
 EDGE_DIM = 8
-TIME_DIM = 32
-NUM_NEIGHBORS = 40
+TIME_DIM = 16
+NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty
-AGG_METHOD = 'mix' # attn, lstm, mean, mix
+AGG_METHOD = 'attn' # attn, lstm, mean, mix
 PRUNE = False
 
 LAM = 1e-4
@@ -55,7 +55,7 @@ if DATASET == 'newAmazon':
 elif DATASET == 'goodreads_large':
     MIN_TRAIN_SEQ = 8
 else:
-    MIN_TRAIN_SEQ = 8
+    MIN_TRAIN_SEQ = 3
 
 
 # GPU / CPU
@@ -79,7 +79,7 @@ if torch.cuda.is_available():
     logger.addHandler(logfile_h)
 
 
-def train(model, data_loader, optimizer, is_pretrain=False, log_interval=100):
+def train(model, data_loader, optimizer, is_pretrain=False, log_interval=10):
     time_start = time.time()
     model.train()
     model.init_workers()
@@ -167,7 +167,7 @@ def test(model, data_loader, is_pretrain=False, fast_test=1):
                 if tgt in topk_ids:
                     hit += 1
         ndcg_score = float(np.mean(ndcg_score))
-        logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ', ndcg: ' + '%.4f' % ndcg_score)
+        logging.info('Test hit rage: ' + str(hit) + '/' + str(total) + ' (' + '%.4f' % (hit/total) + ')' + ', ndcg: ' + '%.4f' % ndcg_score)
         model.del_workers()
     return ndcg_score
 
@@ -246,26 +246,24 @@ if __name__ == "__main__":
         logging.info('Pretrain mf - epoch ' + str(epoch_i + 1) + '/' + str(PRETRAIN_EPOCH))
         train(tgcn_model, train_data_loader, optimizer_pretrain, is_pretrain=True)
         evaluate(tgcn_model, valid_data_loader, is_pretrain=True)
-        ndcg_score = test(tgcn_model, test_data_loader, is_pretrain=True, fast_test=3)
+        ndcg_score = test(tgcn_model, test_data_loader, is_pretrain=True, fast_test=10)
 
     for epoch_i in range(EPOCH):
         logging.info('Train tgcn - epoch ' + str(epoch_i + 1) + '/' + str(EPOCH))
         train(tgcn_model, train_data_loader, optimizer)
         tgcn_model.ngh_finder = test_ngh_finder
         evaluate(tgcn_model, valid_data_loader)
-        ndcg_score = test(tgcn_model, test_data_loader, fast_test=3)
+        ndcg_score = test(tgcn_model, test_data_loader, fast_test=5)
 
         if DATASET == 'newAmazon':
-            if ndcg_score > 0.248:
-                logging.info('NDCG > 0.248, do 1/2 retest')
-                ndcg_score = test(tgcn_model, test_data_loader, fast_test=2)
-            if ndcg_score > 0.255:
-                logging.info('NDCG > 0.255, do full retest')
+            if ndcg_score > 0.25:
+                logging.info('NDCG > 0.25, do full retest')
+                test(tgcn_model, test_data_loader)
+        elif DATASET == 'steam':
+            if ndcg_score > 0.58:
+                logging.info('NDCG > 0.58, do full retest')
                 test(tgcn_model, test_data_loader)
         else:
-            if ndcg_score > 0.43:
-                logging.info('NDCG > 0.43, do 1/2 retest')
-                ndcg_score = test(tgcn_model, test_data_loader, fast_test=2)
             if ndcg_score > 0.45:
                 logging.info('NDCG > 0.45, do full retest')
                 test(tgcn_model, test_data_loader) 

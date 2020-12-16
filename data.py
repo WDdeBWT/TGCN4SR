@@ -5,7 +5,7 @@ from collections import defaultdict
 
 import torch
 
-data_path = 'data/'
+data_path = 'tisasrec_data/'
 
 # class TrainDataset(torch.utils.data.Dataset):
 
@@ -227,15 +227,19 @@ def data_partition_amz(dataset_name='newAmazon'):
         n_item = max(i, n_item)
         adj_list_original[u].append((i, t))
 
+    min_nfeedback = 10
     for user in adj_list_original:
         adj_list_original[user].sort(key=lambda x: x[1])
         nfeedback = len(adj_list_original[user])
         assert nfeedback >= 5
+        if nfeedback < min_nfeedback:
+            min_nfeedback = nfeedback
         # user_map_train[user] = [(x[0], x[1]) for x in adj_list_original[user][:-2]]
         # user_map_valid[user] = [(adj_list_original[user][-2][0], adj_list_original[user][-2][1])]
         # user_map_test[user] = [(adj_list_original[user][-1][0], adj_list_original[user][-1][1])]
 
         test_candidate[user] = [adj_list_original[user][-1][0]]
+    print('min_nfeedback', min_nfeedback)
 
     skip = 0
     neg_f = data_path + dataset_name + '/' + dataset_name + '_test_neg.txt'
@@ -276,12 +280,12 @@ def data_partition_amz(dataset_name='newAmazon'):
 
 
 if __name__ == "__main__":
-    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('ml_1m') # newAmazon, goodreads_large, ml_1m
+    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('steam') # newAmazon, goodreads_large, ml_1m
     print(n_user, n_item)
     import matplotlib.pyplot as plt
     degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])
     print(degree_list.mean(), degree_list.var())
-    plt.hist(x = degree_list, range=(0, 199), bins=100, color='steelblue', edgecolor='black')
+    plt.hist(x = degree_list, range=(0, 30), bins=30, color='steelblue', edgecolor='black')
     # plt.hist(x = degree_list, range=(0, 50), bins=50, color='steelblue', edgecolor='black')
     # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
     # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
