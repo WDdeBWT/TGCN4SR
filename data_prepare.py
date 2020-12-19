@@ -13,33 +13,114 @@ def get_date(ts):
 
 
 def write_pos_file(datastore_path, dataset_name):
-    data_path = datastore_path + '/' + dataset_name + '/'
-    f = open(data_path + dataset_name + '_ori.txt', 'r')
-    u_set = set()
-    i_set = set()
-    user_dict = defaultdict(list)
-    for line in f:
-        u, i, t = line.rstrip().split('\t')
-        try:
-            u = int(u)
-            i = int(i)
-            t = int(t)
-        except:
-            u = int(u)
-            i = int(i)
-            t = int(float(t))
-        u_set.add(u)
-        i_set.add(i)
-        user_dict[u].append([i, t])
-    f.close()
 
-    max_u = max(u_set)
-    for u in range(max_u):
-        assert u+1 in u_set, str(u+1)
-    max_i = max(i_set)
-    for i in range(max_i):
-        assert i+1 in i_set
-    print(max_u, max_i)
+    def count_item(_path_to_data, _item_count):
+        f = open(_path_to_data, 'r')
+        for line in f:
+            try:
+                u, i, t = line.rstrip().split('\t')
+                try:
+                    u = int(u)
+                    i = int(i)
+                    t = int(t)
+                except:
+                    u = int(u)
+                    i = int(i)
+                    t = int(float(t))
+            except:
+                u, i, r, t = line.rstrip().split('\t')
+                try:
+                    u = int(u)
+                    i = int(i)
+                    t = int(t)
+                except:
+                    u = int(u)
+                    i = int(i)
+                    t = int(float(t))
+            _item_count[i] += 1
+        f.close()
+
+    def count_user(_path_to_data, _item_count, _user_count):
+        # should after count item
+        f = open(_path_to_data, 'r')
+        for line in f:
+            try:
+                u, i, t = line.rstrip().split('\t')
+                try:
+                    u = int(u)
+                    i = int(i)
+                    t = int(t)
+                except:
+                    u = int(u)
+                    i = int(i)
+                    t = int(float(t))
+            except:
+                u, i, r, t = line.rstrip().split('\t')
+                try:
+                    u = int(u)
+                    i = int(i)
+                    t = int(t)
+                except:
+                    u = int(u)
+                    i = int(i)
+                    t = int(float(t))
+            if _item_count[i] < 5:
+                continue
+            _user_count[u] += 1
+        f.close()
+
+    data_path = datastore_path + '/' + dataset_name + '/'
+
+    item_count = defaultdict(lambda: 0)
+    user_count = defaultdict(lambda: 0)
+    count_item(data_path + dataset_name + '.txt', item_count)
+    count_user(data_path + dataset_name + '.txt', item_count, user_count)
+
+    f = open(data_path + dataset_name + '.txt', 'r')
+    user_dict = defaultdict(list)
+    usermap = dict()
+    usernum = 0
+    itemmap = dict()
+    itemnum = 0
+    for line in f:
+        try:
+            u, i, t = line.rstrip().split('\t')
+            try:
+                u = int(u)
+                i = int(i)
+                t = int(t)
+            except:
+                u = int(u)
+                i = int(i)
+                t = int(float(t))
+        except:
+            u, i, r, t = line.rstrip().split('\t')
+            try:
+                u = int(u)
+                i = int(i)
+                t = int(t)
+            except:
+                u = int(u)
+                i = int(i)
+                t = int(float(t))
+        if item_count[i] < 5 or user_count[u] < 5:
+            continue
+
+        if u in usermap:
+            userid = usermap[u]
+        else:
+            usernum += 1
+            userid = usernum
+            usermap[u] = userid
+        if i in itemmap:
+            itemid = itemmap[i]
+        else:
+            itemnum += 1
+            itemid = itemnum
+            itemmap[i] = itemid
+        user_dict[userid].append([itemid, t])
+    f.close()
+    print(len(user_dict))
 
     for userid in user_dict.keys():
         user_dict[userid].sort(key=lambda x: x[1])

@@ -86,8 +86,8 @@ class TrainDataset(torch.utils.data.Dataset):
             for i in range(min_train_seq - 1, len(sorted_tuple)):
                 self.instance_user.append(u)
                 self.instance_item.append(sorted_tuple[i][0])
-                self.instance_time.append(sorted_tuple[i - 1][2] + 1)
-                # self.instance_time.append(sorted_tuple[i][2])
+                # self.instance_time.append(sorted_tuple[i - 1][2] + 1)
+                self.instance_time.append(sorted_tuple[i][2])
             self.user_map_only_item[u] = [x[0] for x in sorted_tuple]
         assert len(self.instance_user) == len(self.instance_item)
         assert len(self.instance_user) == len(self.instance_time)
@@ -123,8 +123,8 @@ class ValidDataset(torch.utils.data.Dataset):
             sorted_tuple = sorted(adj_list[u], key=lambda x: x[2])
             self.instance_user.append(u)
             self.instance_item.append(sorted_tuple[-1][0])
-            self.instance_time.append(sorted_tuple[-2][2] + 1)
-            # self.instance_time.append(sorted_tuple[-1][2])
+            # self.instance_time.append(sorted_tuple[-2][2] + 1)
+            self.instance_time.append(sorted_tuple[-1][2])
             self.user_map_only_item[u] = [x[0] for x in sorted_tuple]
         assert len(self.instance_user) == len(self.instance_item)
         assert len(self.instance_user) == len(self.instance_time)
@@ -165,8 +165,8 @@ class TestDataset(torch.utils.data.Dataset):
             self.test_instance_user.append(u)
             self.test_instance_target.append(sorted_tuple[-1][0])
             self.test_instance_candidate.append(test_candidate[u])
-            self.test_instance_time.append(sorted_tuple[-2][2] + 1)
-            # self.test_instance_time.append(sorted_tuple[-1][2])
+            # self.test_instance_time.append(sorted_tuple[-2][2] + 1)
+            self.test_instance_time.append(sorted_tuple[-1][2])
             self.user_map_only_item[u] = [x[0] for x in sorted_tuple]
         assert len(self.test_instance_user) == len(self.test_instance_target)
         assert len(self.test_instance_user) == len(self.test_instance_candidate)
@@ -226,11 +226,14 @@ def data_partition_amz(dataset_name='newAmazon'):
         n_user = max(u, n_user)
         n_item = max(i, n_item)
         adj_list_original[u].append((i, t))
+    f.close()
 
     min_nfeedback = 10
+    total_feedback = 0
     for user in adj_list_original:
         adj_list_original[user].sort(key=lambda x: x[1])
         nfeedback = len(adj_list_original[user])
+        total_feedback += nfeedback
         assert nfeedback >= 5
         if nfeedback < min_nfeedback:
             min_nfeedback = nfeedback
@@ -239,22 +242,23 @@ def data_partition_amz(dataset_name='newAmazon'):
         # user_map_test[user] = [(adj_list_original[user][-1][0], adj_list_original[user][-1][1])]
 
         test_candidate[user] = [adj_list_original[user][-1][0]]
-    print('min_nfeedback', min_nfeedback)
+    print('min_nfeedback:', min_nfeedback, '- total_feedback:', total_feedback)
 
     skip = 0
     neg_f = data_path + dataset_name + '/' + dataset_name + '_test_neg.txt'
-    with open(neg_f, 'r') as file:
-        for line in file:
-            skip += 1
-            if skip == 1:
-                continue
-            user_id, item_id = line.rstrip().split('\t')
-            u = int(user_id)
-            i = int(item_id)
-            n_user = max(u, n_user)
-            n_item = max(i, n_item)
+    f = open(neg_f, 'r')
+    for line in f:
+        skip += 1
+        if skip == 1:
+            continue
+        user_id, item_id = line.rstrip().split('\t')
+        u = int(user_id)
+        i = int(item_id)
+        n_user = max(u, n_user)
+        n_item = max(i, n_item)
 
-            test_candidate[u].append(i)
+        test_candidate[u].append(i)
+    f.close()
 
     n_user = n_user + 1
     n_item = n_item + 1
@@ -280,7 +284,7 @@ def data_partition_amz(dataset_name='newAmazon'):
 
 
 if __name__ == "__main__":
-    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('steam') # newAmazon, goodreads_large, ml_1m
+    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('amazon_beauty') # newAmazon, goodreads_large, ml_1m
     print(n_user, n_item)
     import matplotlib.pyplot as plt
     degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])

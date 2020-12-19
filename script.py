@@ -16,16 +16,16 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1216-2000'
+CODE_VERSION = '1210-1600'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
-DATASET = 'steam' # newAmazon, goodreads_large, vidio_core5
-TOPK = 5
-PRETRAIN_EPOCH = 10 # 20
-EPOCH = 20
+DATASET = 'amazon_game' # beauty, cds_vinyl, game, movies_tv, gowalla, steam
+TOPK = 10
+PRETRAIN_EPOCH = 50 # 20
+EPOCH = 30
 LR = 0.001
-BATCH_SIZE = 4096 + 2048
+BATCH_SIZE = 2048 # mix with pretrain: 512 for 40ngh & 2048 for 20ngh
 NUM_WORKERS_DL = 0 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 USE_MEM = False
@@ -33,12 +33,12 @@ if cpu_count() <= 4:
     NUM_WORKERS_SN = cpu_count()
     USE_MEM = True
 
-FEATURE_DIM = 32
+FEATURE_DIM = 40
 EDGE_DIM = 8
 TIME_DIM = 16
 NUM_NEIGHBORS = 20
 POS_ENCODER = 'pos' # time, pos, empty
-AGG_METHOD = 'attn' # attn, lstm, mean, mix
+AGG_METHOD = 'mix' # attn, lstm, mean, mix
 PRUNE = False
 
 LAM = 1e-4
@@ -79,7 +79,7 @@ if torch.cuda.is_available():
     logger.addHandler(logfile_h)
 
 
-def train(model, data_loader, optimizer, is_pretrain=False, log_interval=10):
+def train(model, data_loader, optimizer, is_pretrain=False, log_interval=50):
     time_start = time.time()
     model.train()
     model.init_workers()
@@ -205,7 +205,7 @@ def load_checkpoint(model, file_path):
 
 
 if __name__ == "__main__":
-    print('CODE_VERSION: ' + CODE_VERSION)
+    print('CODE_VERSION: ' + CODE_VERSION, '- DATASET: ' + DATASET)
     adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz(DATASET)
 
     # train_dataset = TrainDataset(adj_list_train, n_user, n_item, MIN_TRAIN_SEQ)
@@ -244,29 +244,28 @@ if __name__ == "__main__":
 
     for epoch_i in range(PRETRAIN_EPOCH):
         logging.info('Pretrain mf - epoch ' + str(epoch_i + 1) + '/' + str(PRETRAIN_EPOCH))
-        train(tgcn_model, train_data_loader, optimizer_pretrain, is_pretrain=True)
+        train(tgcn_model, train_data_loader, optimizer_pretrain, is_pretrain=True, log_interval=100)
         evaluate(tgcn_model, valid_data_loader, is_pretrain=True)
-        ndcg_score = test(tgcn_model, test_data_loader, is_pretrain=True, fast_test=10)
+        if (epoch_i+1) % 10 == 0:
+            ndcg_score = test(tgcn_model, test_data_loader, is_pretrain=True, fast_test=10)
 
     for epoch_i in range(EPOCH):
         logging.info('Train tgcn - epoch ' + str(epoch_i + 1) + '/' + str(EPOCH))
         train(tgcn_model, train_data_loader, optimizer)
         tgcn_model.ngh_finder = test_ngh_finder
         evaluate(tgcn_model, valid_data_loader)
-        ndcg_score = test(tgcn_model, test_data_loader, fast_test=5)
+        test_span = 5 if AGG_METHOD == 'mix' else 10
+        if (epoch_i+1) % test_span == 0:
+            ndcg_score = test(tgcn_model, test_data_loader, fast_test=5)
 
-        if DATASET == 'newAmazon':
-            if ndcg_score > 0.25:
-                logging.info('NDCG > 0.25, do full retest')
-                test(tgcn_model, test_data_loader)
-        elif DATASET == 'steam':
-            if ndcg_score > 0.58:
-                logging.info('NDCG > 0.58, do full retest')
-                test(tgcn_model, test_data_loader)
-        else:
-            if ndcg_score > 0.45:
-                logging.info('NDCG > 0.45, do full retest')
-                test(tgcn_model, test_data_loader) 
+            if DATASET == 'amazon_beauty':
+                if ndcg_score > 0.3:
+                    logging.info('NDCG > 0.3, do full retest')
+                    test(tgcn_model, test_data_loader)
+            else:
+                if ndcg_score > 0.5:
+                    logging.info('NDCG > 0.5, do full retest')
+                    test(tgcn_model, test_data_loader) 
 
         tgcn_model.ngh_finder = train_ngh_finder
         logging.info('--------------------------------------------------')
