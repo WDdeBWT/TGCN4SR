@@ -195,7 +195,8 @@ class LSTMPool(torch.nn.Module):
 
         hn = hn[-1, :, :] #hn.squeeze(dim=0)
 
-        out = self.merger.forward(hn, src)
+        # out = self.merger.forward(hn, src)
+        out = hn
         return out, None
 
 
@@ -318,7 +319,7 @@ class AttnModel(torch.nn.Module):
         output = output.squeeze()
         attn = attn.squeeze()
 
-        output = self.merger(output, src)
+        # output = self.merger(output, src)
         return output, attn
 
 
@@ -332,7 +333,7 @@ class MixModel(torch.nn.Module):
         self.lstm_model = LSTMPool(feat_dim, edge_dim, time_dim, data_set=data_set)
 
         # self.weight_attn = nn.Parameter(torch.zeros(feat_dim))
-        # self.merger = MergeLayer(feat_dim, feat_dim, feat_dim, feat_dim)
+        self.merger = MergeLayer(feat_dim * 2 + edge_dim + time_dim, feat_dim, feat_dim, feat_dim)
         # self.sim_gate = SimGate(feat_dim)
 
     def set_tgt(self, attn_tgt):
@@ -342,10 +343,10 @@ class MixModel(torch.nn.Module):
         attn_result, _ = self.attn_model(src, src_t, seq, seq_t, seq_e, time_diff, mask, candidate)
         lstm_result, _ = self.lstm_model(src, src_t, seq, seq_t, seq_e, time_diff, mask)
 
-        output = (attn_result + lstm_result) / 2 # Mean
+        # output = (attn_result + lstm_result) / 2 # Mean
         # output = (0.5 + self.weight_attn) * attn_result + (0.5 - self.weight_attn) * lstm_result # Weighted sum
         # output = torch.max(torch.stack((attn_result, lstm_result), dim=1), dim=1)[0] # Max pool
-        # output = self.merger(attn_result, lstm_result) # Concat & fc
+        output = self.merger(torch.cat((attn_result, lstm_result), -1), src) # Concat & fc
         # TODO: Try attention
         # assert candidate is not None
         # w1 = self.sim_gate(attn_result, lstm_result, candidate)
@@ -444,13 +445,20 @@ class TGCN(torch.nn.Module):
                                                                  self.edge_dim,) for _ in range(num_layers)])
         elif agg_method == 'mix':
             logging.info('Aggregation uses attention model')
+            # self.attn_model_list = torch.nn.ModuleList([MixModel(self.feat_dim,
+            #                                                      self.edge_dim,
+            #                                                      self.time_dim,
+            #                                                      n_head=n_head,
+            #                                                      drop_out=drop_out,
+            #                                                      sa_layers=sa_layers,
+            #                                                      data_set=data_set) for _ in range(num_layers)])
             self.attn_model_list = torch.nn.ModuleList([MixModel(self.feat_dim,
                                                                  self.edge_dim,
                                                                  self.time_dim,
                                                                  n_head=n_head,
                                                                  drop_out=drop_out,
                                                                  sa_layers=sa_layers,
-                                                                 data_set=data_set) for _ in range(num_layers)])
+                                                                 data_set=data_set) for _ in range(2)])
         else:
             raise ValueError('invalid agg_method value, use attn or lstm')
 
@@ -520,9 +528,9 @@ class TGCN(torch.nn.Module):
         return loss + (1e-4) * reg_loss
 
     def bpr_loss(self, src_nodes, tgt_nodes, neg_nodes, cut_times, num_neighbors=20):
-        src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, node_type=0)
-        tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors, node_type=1)
-        neg_embed = self.tem_conv(neg_nodes, cut_times, self.num_layers, 0, num_neighbors, node_type=1)
+        src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, is_user=1)
+        tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors)
+        neg_embed = self.tem_conv(neg_nodes, cut_times, self.num_layers, 0, num_neighbors)
         if self.target_mode == 'prod':
             pos_scores = torch.sum(src_embed * tgt_embed, dim=1)
             neg_scores = torch.sum(src_embed * neg_embed, dim=1)
@@ -537,10 +545,10 @@ class TGCN(torch.nn.Module):
         return loss
 
     # def bpr_loss(self, src_nodes, tgt_nodes, neg_nodes, cut_times, num_neighbors=20):
-    #     src_embed_pos = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=tgt_nodes, node_type=0)
-    #     src_embed_neg = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=neg_nodes, node_type=0)
-    #     tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=src_nodes, node_type=1)
-    #     neg_embed = self.tem_conv(neg_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=src_nodes, node_type=1)
+    #     src_embed_pos = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=tgt_nodes)
+    #     src_embed_neg = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=neg_nodes)
+    #     tgt_embed = self.tem_conv(tgt_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=src_nodes)
+    #     neg_embed = self.tem_conv(neg_nodes, cut_times, self.num_layers, 0, num_neighbors, candidate=src_nodes)
     #     if self.target_mode == 'prod':
     #         pos_scores = torch.sum(src_embed_pos * tgt_embed, dim=1)
     #         neg_scores = torch.sum(src_embed_neg * neg_embed, dim=1)
@@ -576,11 +584,11 @@ class TGCN(torch.nn.Module):
         return batch_topk_ids
 
     def get_top_n(self, src_nodes, candidate_nodes, cut_times, num_neighbors=20, topk=20):
-        src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, node_type=0)
+        src_embed = self.tem_conv(src_nodes, cut_times, self.num_layers, 0, num_neighbors, is_user=1)
         batch_ratings = []
         for cad, cut, src in zip(candidate_nodes, cut_times, src_embed):
             cut = np.tile(cut, (cad.shape[0]))
-            candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors, node_type=1)
+            candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors)
             if self.target_mode == 'prod':
                 ratings = torch.matmul(candidate_embed, src) # shape=(101,)
             elif self.target_mode == 'dist':
@@ -601,8 +609,8 @@ class TGCN(torch.nn.Module):
     #     for src, cad, cut in zip(src_nodes, candidate_nodes, cut_times):
     #         src = np.tile(src, (cad.shape[0]))
     #         cut = np.tile(cut, (cad.shape[0]))
-    #         src_embed = self.tem_conv(src, cut, self.num_layers, 0, num_neighbors, candidate=cad, node_type=0)
-    #         candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors, candidate=src, node_type=1)
+    #         src_embed = self.tem_conv(src, cut, self.num_layers, 0, num_neighbors, candidate=cad)
+    #         candidate_embed = self.tem_conv(cad, cut, self.num_layers, 0, num_neighbors, candidate=src)
     #         if self.target_mode == 'prod':
     #             ratings = torch.sum(candidate_embed * src_embed, dim=1) # shape=(101,)
     #         elif self.target_mode == 'dist':
@@ -618,7 +626,7 @@ class TGCN(torch.nn.Module):
     #     batch_topk_ids = torch.gather(torch.Tensor(candidate_nodes).long().to(self.device), 1, index_k)
     #     return batch_topk_ids
 
-    def tem_conv(self, src_nodes, cut_times, curr_layers, curr_distance, num_neighbors=20, candidate=None, node_type=0):
+    def tem_conv(self, src_nodes, cut_times, curr_layers, curr_distance, num_neighbors=20, candidate=None, is_user=0):
         assert(curr_layers >= 0)
         assert src_nodes.ndim == 1
         assert cut_times.ndim == 1
@@ -645,16 +653,16 @@ class TGCN(torch.nn.Module):
                                                curr_layers=curr_layers - 1,
                                                curr_distance=curr_distance,
                                                num_neighbors=num_neighbors,
-                                               candidate=candidate, 
-                                               node_type=node_type)
+                                               candidate=candidate,
+                                               is_user=is_user)
 
 
             if self.num_workers is None:
                 src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.ngh_finder.get_temporal_neighbor(src_nodes,
                                                                                                                 cut_times,
-                                                                                                                num_neighbors)
+                                                                                                                num_neighbors * (1 - is_user * 0))
             else:
-                src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.parallel_ngh_find(src_nodes, cut_times, num_neighbors)
+                src_ngh_node_batch, src_ngh_eidx_batch, src_ngh_t_batch = self.parallel_ngh_find(src_nodes, cut_times, num_neighbors * (1 - is_user * 0))
 
             src_ngh_node_batch_th = torch.from_numpy(src_ngh_node_batch).long().to(self.device)
             src_ngh_eidx_batch = torch.from_numpy(src_ngh_eidx_batch).long().to(self.device)
@@ -675,8 +683,8 @@ class TGCN(torch.nn.Module):
                                                    curr_distance=curr_distance + 1,
                                                    num_neighbors=num_neighbors,
                                                    candidate=candidate,
-                                                   node_type=node_type)
-            src_ngh_feat = src_ngh_node_conv_feat.view(batch_size, num_neighbors, -1)
+                                                   is_user=(is_user + 1) % 2)
+            src_ngh_feat = src_ngh_node_conv_feat.view(batch_size, num_neighbors * (1 - is_user * 0), -1)
             mask = src_ngh_node_batch_th == 0
 
             if num_neighbors >= 30 and curr_distance + 1 == self.num_layers and self.prune:
@@ -687,9 +695,8 @@ class TGCN(torch.nn.Module):
             src_ngn_edge_feat = self.edge_embed(src_ngh_eidx_batch)
 
             # attention aggregation
-            # model_idx = 2 - curr_layers + curr_distance
-            # attn_m = self.attn_model_list[node_type * 3 + model_idx]
-            attn_m = self.attn_model_list[curr_layers - 1]
+            # attn_m = self.attn_model_list[curr_layers - 1]
+            attn_m = self.attn_model_list[(curr_layers + is_user) % 2]
 
             if self.use_td:
                 time_diff = src_ngh_t_batch_th

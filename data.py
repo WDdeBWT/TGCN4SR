@@ -283,14 +283,56 @@ def data_partition_amz(dataset_name='newAmazon'):
     return adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item
 
 
+def statistic_dataset(adj_list):
+    total_min = float('inf')
+    total_max = -float('inf')
+    sequence_time_span = []
+    sequence_time_interval = []
+    for user in adj_list:
+        assert len(adj_list[user]) >= 1
+        min_ts = float('inf')
+        max_ts = -float('inf')
+        temp_list = []
+        for x in adj_list[user]:
+            if x[2] < min_ts:
+                min_ts = x[2]
+            if x[2] > max_ts:
+                max_ts = x[2]
+            temp_list.append(x[2])
+        if min_ts < total_min:
+            total_min = min_ts
+        if max_ts > total_max:
+            total_max = max_ts
+        temp_list.sort()
+        for i in range(len(temp_list) - 1):
+            sequence_time_interval.append(temp_list[i + 1] - temp_list[i])
+        sequence_time_span.append(max_ts - min_ts)
+    sequence_time_span = np.array(sequence_time_span) / 31536000
+    # sequence_time_interval = np.array(sequence_time_interval) / 31536000
+    sequence_time_interval = np.array(sequence_time_interval)
+    sequence_time_interval = sequence_time_interval / sequence_time_interval.mean()
+    print('----- whole dataset -----')
+    print('min stamp:', total_min, ', max stamp:', total_max, ', time span(year):', ((total_max - total_min) / 31536000))
+    print('----- each user\'s time span -----')
+    print('mean & var', sequence_time_span.mean(), sequence_time_span.var())
+    print('----- each interaction\'s time interval -----')
+    print('mean & var & max', sequence_time_interval.mean(), sequence_time_interval.var(), sequence_time_interval.max())
+
+
 if __name__ == "__main__":
-    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz('amazon_beauty') # newAmazon, goodreads_large, ml_1m
-    print(n_user, n_item)
-    import matplotlib.pyplot as plt
+    # amazon_cds_vinyl, amazon_movies_tv, amazon_beauty, amazon_game, steam
+    dataset = 'steam'
+    print(dataset)
+    adj_list_train, adj_list_tandv, adj_list_tavat, test_candidate, n_user, n_item = data_partition_amz(dataset)
+    statistic_dataset(adj_list_tavat)
+
+    print('n_user', n_user, 'n_item', n_item)
+    # import matplotlib.pyplot as plt
     degree_list = np.array([len(adj_list_tavat[u]) for u in adj_list_tavat])
+    degree_list = degree_list / degree_list.mean()
     print(degree_list.mean(), degree_list.var())
-    plt.hist(x = degree_list, range=(0, 30), bins=30, color='steelblue', edgecolor='black')
-    # plt.hist(x = degree_list, range=(0, 50), bins=50, color='steelblue', edgecolor='black')
-    # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
-    # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
-    plt.show()
+    # plt.hist(x = degree_list, range=(0, 30), bins=30, color='steelblue', edgecolor='black')
+    # # plt.hist(x = degree_list, range=(0, 50), bins=50, color='steelblue', edgecolor='black')
+    # # plt.hist(x = degree_list, bins=100, color='steelblue', edgecolor='black')
+    # # plt.hist(x = degree_list, color='steelblue', edgecolor='black')
+    # # plt.show()

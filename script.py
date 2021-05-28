@@ -16,16 +16,16 @@ from graph import NeighborFinder
 from data import data_partition_amz, TrainDataset, ValidDataset, TestDataset
 from global_flag import flag_true, flag_false
 
-CODE_VERSION = '1210-1600'
+CODE_VERSION = '0518-2052'
 LOAD_VERSION = None # '1105-2000' for Amazon
 SAVE_CHECKPT = False
 
-DATASET = 'amazon_game' # beauty, cds_vinyl, game, movies_tv, gowalla, steam
+DATASET = 'amazon_movies_tv' # beauty, cds_vinyl, game, movies_tv, gowalla, steam
 TOPK = 10
 PRETRAIN_EPOCH = 50 # 20
 EPOCH = 30
 LR = 0.001
-BATCH_SIZE = 2048 # mix with pretrain: 512 for 40ngh & 2048 for 20ngh
+BATCH_SIZE = 512 # mix with pretrain: 512 for 40ngh & 2048 for 20ngh; 3072 for 10/20, 384 for 20/100
 NUM_WORKERS_DL = 0 # dataloader workers, 0 for for single process
 NUM_WORKERS_SN = 0 # search_ngh workers, 0 for half cpu core, None for single process
 USE_MEM = False
@@ -36,7 +36,7 @@ if cpu_count() <= 4:
 FEATURE_DIM = 40
 EDGE_DIM = 8
 TIME_DIM = 16
-NUM_NEIGHBORS = 20
+NUM_NEIGHBORS = 40
 POS_ENCODER = 'pos' # time, pos, empty
 AGG_METHOD = 'mix' # attn, lstm, mean, mix
 PRUNE = False
@@ -263,7 +263,7 @@ if __name__ == "__main__":
                     logging.info('NDCG > 0.3, do full retest')
                     test(tgcn_model, test_data_loader)
             else:
-                if ndcg_score > 0.5:
+                if ndcg_score > 0.84:
                     logging.info('NDCG > 0.5, do full retest')
                     test(tgcn_model, test_data_loader) 
 
